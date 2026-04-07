@@ -1,9 +1,35 @@
+# Motivation
+
+While some Kaggle solutions use stratified cross-validation, I adopted a time-aware validation strategy to better reflect real-world fraud detection scenarios, where transaction distributions shift over time. This avoids temporal leakage and provides more realistic performance estimates.
+
 # Procedures
 
 1. IEEE-CIS Raw Data (Local/Cloud)
+
 2. Preprocessing & ELT cleaning, encoding train/val/test split
+
 3. Model training (e.g. LightGBM/XGBoost) + Threshold tuning
+
 4. MLflow Tracking params, metrics, artifects, registry
+
 5. FastAPI Inference /predict /health
+
 6. Prediction Logs + Monitoring drift/score shift
+
 7. Scheduled Retraining via Prefect
+
+# Installing raw data from kaggle IEEE-CIS competition
+
+1. Install KaggleHub CLI: ```pip install kagglehub```
+
+2. Create your own Kaggle account, and then login in your computer: ```kagglehub.login()```
+
+3. Join IEEE-CIS competetion from your Kaggle account, before you can call fdb.datasets with ieeecis
+
+4. Download the authentication token from "My Account" on Kaggle, and save token at ~/.kaggle/kaggle.json on Linux, OSX and at C:\Users<Windows-username>.kaggle\kaggle.json on Windows.
+
+5. Use the token by: ```export KAGGLE_API_TOKEN=KGAT_94797bc62067462d83bedbf21ed612bc``` (token name ```kaggle_api```)
+
+6. After the setup, download using ```kaggle competitions download ieee-fraud-detection --p ./data/raw```
+
+7. Unzip the files via ```unzip ./data/raw/ieee-fraud-detection.zip -d ./data/raw/ieee-fraud-detection/```
