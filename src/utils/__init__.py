@@ -2,7 +2,8 @@ from .config import (
     TARGET_COLUMN,
     ID_COLUMN,
     TIME_COLUMN,
-    START_DATE
+    START_DATE,
+    V_COLUMNS_USED,
 )
 
 from .logger import (
@@ -14,5 +15,6 @@ __all__ = [
     "ID_COLUMN",
     "TIME_COLUMN",
     "START_DATE",
+    "V_COLUMNS_USED",
     "setup_logging",
 ]

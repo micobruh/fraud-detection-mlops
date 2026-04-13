@@ -6,7 +6,7 @@ from data.preprocess_codex import (
     normalize_identity_columns,
     reduce_memory_footprint,
 )
-from src.features.build_features import FeatureConfig, build_modeling_frame
+from features.build_features_codex import FeatureConfig, build_modeling_frame
 
 
 def test_normalize_identity_columns_replaces_hyphens():

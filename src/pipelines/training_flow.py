@@ -19,7 +19,7 @@ from data.preprocess_codex import (
     merge_transaction_and_identity,
     reduce_memory_footprint,
 )
-from src.features.build_features import FeatureConfig, build_modeling_frame
+from features.build_features_codex import FeatureConfig, build_modeling_frame
 
 
 @dataclass
