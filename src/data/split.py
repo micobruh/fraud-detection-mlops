@@ -49,14 +49,6 @@ def temporal_balanced_train_test_split(
         if score < best_score:
             best_score = score
             train_end = i
-            # best = {
-            #     "train_end": i,
-            #     "train_rate": train_target_rate,
-            #     "test_rate": test_target_rate,
-            #     "train_pos": int(y_train.sum()),
-            #     "test_pos": int(n_test_pos),
-            #     "score": score,
-            # }
     
     df_main = df.iloc[: train_end]
     df_local_test = df.iloc[train_end :]

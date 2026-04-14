@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.pipelines.training_flow import (
+from pipelines.training_flow_codex import (
     compute_ranking_metrics,
     run_training_flow,
     time_based_split,

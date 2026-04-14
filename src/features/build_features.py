@@ -3,14 +3,206 @@ from collections import defaultdict
 from typing import Any, Iterable
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder, OrdinalEncoder, FunctionTransformer
 from sklearn.base import BaseEstimator, TransformerMixin
-from imblearn.pipeline import Pipeline
-from imblearn.over_sampling import SMOTE
+from sklearn.preprocessing import OrdinalEncoder
+from ..utils import TIME_COLUMN
 import logging
 
 logger = logging.getLogger(__name__)
 
+
+class DataFrameOrdinalEncoder(BaseEstimator, TransformerMixin):
+    def __init__(
+        self,
+        columns: list[str],
+        handle_unknown: str = "use_encoded_value",
+        unknown_value: int = -1,
+        encoded_missing_value: int = -2,
+        dtype: str = "float32",
+    ) -> None:
+        self.columns = columns
+        self.handle_unknown = handle_unknown
+        self.unknown_value = unknown_value
+        self.encoded_missing_value = encoded_missing_value
+        self.dtype = dtype
+
+    def fit(self, X: pd.DataFrame, y: Any = None) -> "DataFrameOrdinalEncoder":
+        self._validate_input(X)
+
+        self.encoder_ = OrdinalEncoder(
+            handle_unknown=self.handle_unknown,
+            unknown_value=self.unknown_value,
+            encoded_missing_value=self.encoded_missing_value,
+            dtype=self.dtype,
+        )
+        self.encoder_.fit(X[self.columns])
+
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        self._check_is_fitted()
+        self._validate_input(X)
+
+        X = X.copy()
+        X[self.columns] = self.encoder_.transform(X[self.columns])
+        return X
+
+    def get_feature_names_out(self, input_features=None):
+        return input_features if input_features is not None else self.columns
+
+    def _validate_input(self, X: pd.DataFrame) -> None:
+        if not isinstance(X, pd.DataFrame):
+            raise TypeError("DataFrameOrdinalEncoder expects a pandas DataFrame.")
+
+        missing_cols = [col for col in self.columns if col not in X.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+
+    def _check_is_fitted(self) -> None:
+        if not hasattr(self, "encoder_"):
+            raise ValueError("DataFrameOrdinalEncoder is not fitted yet. Call fit() first.")
+        
+
+from __future__ import annotations
+
+from typing import Any
+import pandas as pd
+import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
+
+
+class NumericShiftFillTransformer(BaseEstimator, TransformerMixin):
+    def __init__(
+        self,
+        columns: list[str],
+        exclude: list[str] | None = None,
+        fill_value: float = -1.0,
+        dtype: str = "float32",
+    ) -> None:
+        self.columns = columns
+        self.exclude = exclude if exclude is not None else []
+        self.fill_value = fill_value
+        self.dtype = dtype
+
+    def fit(self, X: pd.DataFrame, y: Any = None) -> "NumericShiftFillTransformer":
+        self._validate_input(X)
+
+        self.columns_to_transform_ = [
+            col for col in self.columns if col not in self.exclude
+        ]
+
+        self.min_values_ = {}
+        for col in self.columns_to_transform_:
+            col_min = X[col].min(skipna=True)
+            if pd.isna(col_min):
+                col_min = 0.0
+            self.min_values_[col] = float(col_min)
+
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        self._check_is_fitted()
+        self._validate_input(X)
+
+        X = X.copy()
+
+        for col in self.columns_to_transform_:
+            X[col] = X[col] - np.float32(self.min_values_[col])
+            X[col] = X[col].fillna(self.fill_value).astype(self.dtype)
+
+        return X
+
+    def _validate_input(self, X: pd.DataFrame) -> None:
+        if not isinstance(X, pd.DataFrame):
+            raise TypeError("NumericShiftFillTransformer expects a pandas DataFrame.")
+
+        missing_cols = [col for col in self.columns if col not in X.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+
+    def _check_is_fitted(self) -> None:
+        if not hasattr(self, "min_values_"):
+            raise ValueError("NumericShiftFillTransformer is not fitted yet. Call fit() first.")
+        
+
+class DColumnNormalizer(BaseEstimator, TransformerMixin):
+    """
+    Add normalized D columns to the input DataFrame.
+
+    For each selected D column:
+        D{i}_normalized = floor(D{i} - TransactionDT / seconds_in_day) + offset
+
+    The transformer returns the full augmented DataFrame so downstream
+    transformers can use the newly created columns.
+    """
+
+    def __init__(
+        self,
+        d_indices: list[int] | None = None,
+        exclude: tuple[int, ...] = (9,),
+        time_col: str = TIME_COLUMN,
+        offset: float = 1000.0,
+        seconds_in_day: int = 24 * 60 * 60,
+        dtype: str = "float32",
+    ) -> None:
+        self.d_indices = d_indices if d_indices is not None else list(range(1, 16))
+        self.exclude = exclude
+        self.time_col = time_col
+        self.offset = offset
+        self.seconds_in_day = seconds_in_day
+        self.dtype = dtype
+
+    def fit(self, X: pd.DataFrame, y=None) -> "DColumnNormalizer":
+        self._validate_input(X)
+        self.created_columns_ = [
+            f"D{i}_normalized"
+            for i in self.d_indices
+            if i not in self.exclude
+        ]
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        self._check_is_fitted()
+        self._validate_input(X)
+
+        X = X.copy()
+
+        time_scaled = X[self.time_col] / np.float32(self.seconds_in_day)
+
+        for i in self.d_indices:
+            if i in self.exclude:
+                continue
+
+            source_col = f"D{i}"
+            new_col = f"{source_col}_normalized"
+
+            X[new_col] = (
+                np.floor(X[source_col] - time_scaled) + self.offset
+            ).astype(self.dtype)
+
+        return X
+
+    def get_feature_names_out(self, input_features=None):
+        if input_features is None:
+            return None
+        return list(input_features) + self.created_columns_
+
+    def _validate_input(self, X: pd.DataFrame) -> None:
+        if not isinstance(X, pd.DataFrame):
+            raise TypeError("DColumnNormalizer expects a pandas DataFrame as input.")
+
+        required_cols = [self.time_col] + [
+            f"D{i}" for i in self.d_indices if i not in self.exclude
+        ]
+        missing_cols = [col for col in required_cols if col not in X.columns]
+
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+
+    def _check_is_fitted(self) -> None:
+        if not hasattr(self, "created_columns_"):
+            raise ValueError("DColumnNormalizer is not fitted yet. Call fit() first.")
+    
 
 class FrequencyEncoder(BaseEstimator, TransformerMixin):
     """
@@ -251,14 +443,6 @@ class CombineColumnsTransformer(BaseEstimator, TransformerMixin):
         combined = X[self.columns].astype(str).agg("_".join, axis=1)
 
         return pd.DataFrame({new_col_name: combined}, index=X.index)
-    
-
-from __future__ import annotations
-
-from typing import Any, Iterable
-import numpy as np
-import pandas as pd
-from sklearn.base import BaseEstimator, TransformerMixin
 
 
 class UIDAggregationTransformer(BaseEstimator, TransformerMixin):
@@ -347,7 +531,7 @@ class UIDAggregationTransformer(BaseEstimator, TransformerMixin):
                     # Build mapping: uid -> aggregated value
                     if agg == "nunique":
                         grouped = temp.groupby(uid_col, dropna=False)[main_col].nunique(dropna=True)
-                        global_fallback = float(temp[main_col].nunique(dropna=True))
+                        global_fallback = float(grouped.median())
                     else:
                         grouped = temp.groupby(uid_col, dropna=False)[main_col].agg(agg)
                         global_fallback = self._compute_global_fallback(temp[main_col], agg)
@@ -447,4 +631,70 @@ class UIDAggregationTransformer(BaseEstimator, TransformerMixin):
 
         if pd.isna(value):
             return float(self.fill_value)
-        return float(value)    
+        return float(value)
+    
+
+class DropColumnsTransformer(BaseEstimator, TransformerMixin):
+    """
+    Drop specified columns from a pandas DataFrame.
+
+    Parameters
+    ----------
+    columns : Iterable[str]
+        Columns to drop.
+    errors : {"raise", "ignore"}, default="ignore"
+        - "raise": error if any column is missing
+        - "ignore": drop only existing columns
+    copy : bool, default=True
+        Whether to operate on a copy of X.
+    """
+
+    def __init__(
+        self,
+        columns: Iterable[str],
+        errors: str = "ignore",
+        copy: bool = True,
+    ) -> None:
+        self.columns = list(columns)
+        self.errors = errors
+        self.copy = copy
+
+    def fit(self, X: pd.DataFrame, y: Any = None) -> "DropColumnsTransformer":
+        self._validate_input(X)
+
+        self.existing_columns_ = [c for c in self.columns if c in X.columns]
+        self.missing_columns_ = [c for c in self.columns if c not in X.columns]
+
+        if self.errors == "raise" and self.missing_columns_:
+            raise ValueError(f"Columns not found during fit: {self.missing_columns_}")
+
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        self._check_is_fitted()
+        self._validate_input(X)
+
+        X_out = X.copy() if self.copy else X
+
+        if self.errors == "raise":
+            missing = [c for c in self.columns if c not in X_out.columns]
+            if missing:
+                raise ValueError(f"Columns not found during transform: {missing}")
+            return X_out.drop(columns=self.columns)
+
+        # errors == "ignore"
+        cols_to_drop = [c for c in self.columns if c in X_out.columns]
+        return X_out.drop(columns=cols_to_drop)
+
+    def get_feature_names_out(self, input_features=None):
+        if input_features is None:
+            return None
+        return [c for c in input_features if c not in self.columns]
+
+    def _validate_input(self, X: pd.DataFrame) -> None:
+        if not isinstance(X, pd.DataFrame):
+            raise TypeError("DropColumnsTransformer expects a pandas DataFrame.")
+
+    def _check_is_fitted(self) -> None:
+        if not hasattr(self, "existing_columns_"):
+            raise ValueError("Transformer is not fitted yet. Call fit() first.")    
