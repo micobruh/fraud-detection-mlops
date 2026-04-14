@@ -3,7 +3,6 @@ from imblearn.over_sampling import SMOTE
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
-from ..pipelines import build_feature_pipeline
 from ..utils import RANDOM_STATE
 
 
@@ -15,7 +14,7 @@ def build_full_pipeline(feature_pipeline, model, sampler="passthrough"):
     ])
 
 
-def get_candidate_configs(build_feature_pipeline, random_state: int = 42):
+def get_candidate_configs(build_feature_pipeline, random_state: int = RANDOM_STATE):
     feature_pipeline = build_feature_pipeline()
 
     return [

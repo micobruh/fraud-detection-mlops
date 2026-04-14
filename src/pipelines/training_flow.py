@@ -21,7 +21,6 @@ from ..features import (
     DropColumnsTransformer, 
     extract_relevant_V_columns
 )
-from ..models import candidate_configs
 from ..utils import (
     RANDOM_STATE, 
     TARGET_COLUMN, 
