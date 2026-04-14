@@ -5,7 +5,7 @@ from .config import (
     ID_COLUMN,
     TIME_COLUMN,
     BASE_COLUMNS,
-    V_COLUMNS_USED,
+    V_COLUMNS,
     CATEGORICAL_COLUMNS,
     NUMERICAL_COLUMNS,
     DROP_COLUMNS
@@ -22,7 +22,7 @@ __all__ = [
     "ID_COLUMN",
     "TIME_COLUMN",
     "BASE_COLUMNS",    
-    "V_COLUMNS_USED",
+    "V_COLUMNS",
     "CATEGORICAL_COLUMNS",
     "NUMERICAL_COLUMNS",
     "DROP_COLUMNS",

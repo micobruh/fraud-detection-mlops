@@ -1,15 +1,40 @@
+import pandas as pd
 from sklearn.pipeline import Pipeline
+from sklearn.model_selection import RandomizedSearchCV
 from sklearn.metrics import roc_auc_score
-from Typing import List
+from typing import List
+import joblib
+import json
 import gc
-from ..data import load_interim_data, temporal_balanced_train_test_split, temporal_train_val_split
-from ..features import NumericShiftFillTransformer, DataFrameOrdinalEncoder, DColumnNormalizer, FrequencyEncoder, CombineColumnsTransformer, UIDAggregationTransformer, DropColumnsTransformer, extract_relevant_V_columns
-from ..models import build_full_pipeline
-from ..utils import TARGET_COLUMN, BASE_COLUMNS, V_COLUMNS_USED, CATEGORICAL_COLUMNS, NUMERICAL_COLUMNS, DROP_COLUMNS
-
+from ..data import (
+    load_interim_data, 
+    temporal_balanced_train_test_split, 
+    temporal_train_val_split
+)
+from ..features import (
+    NumericShiftFillTransformer, 
+    DataFrameOrdinalEncoder, 
+    DColumnNormalizer, 
+    FrequencyEncoder, 
+    CombineColumnsTransformer, 
+    UIDAggregationTransformer, 
+    DropColumnsTransformer, 
+    extract_relevant_V_columns
+)
+from ..models import candidate_configs
+from ..utils import (
+    RANDOM_STATE, 
+    TARGET_COLUMN, 
+    BASE_COLUMNS, 
+    V_COLUMNS, 
+    CATEGORICAL_COLUMNS, 
+    NUMERICAL_COLUMNS, 
+    DROP_COLUMNS
+)
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 def build_feature_pipeline() -> Pipeline:
     return Pipeline([
@@ -26,6 +51,56 @@ def build_feature_pipeline() -> Pipeline:
                                                             use_na_sentinel=True)),
         ("drop_columns", DropColumnsTransformer(DROP_COLUMNS))                                                    
     ], verbose=True)
+
+
+def run_model_search(X_train, y_train, cv_splits, candidate_configs):
+    all_results = []
+    best_search = None
+    best_score = float("-inf")
+
+    for config in candidate_configs:
+        search = RandomizedSearchCV(
+            estimator=config["pipeline"],
+            param_distributions=config["param_distributions"],
+            n_iter=config.get("n_iter", 20),
+            scoring="roc_auc",
+            cv=cv_splits,
+            n_jobs=-1,
+            refit=True,
+            random_state=RANDOM_STATE,
+            verbose=2,
+            error_score="raise",
+        )
+
+        search.fit(X_train, y_train)
+
+        best_params = search.best_params_
+        sampler_used = best_params.get("sampler", "passthrough")
+
+        all_results.append({
+            "model_name": config["name"],
+            "best_cv_score": search.best_score_,
+            "best_params": best_params,
+            "best_estimator": search.best_estimator_,
+            "best_sampler": str(sampler_used),
+        })
+
+        if search.best_score_ > best_score:
+            best_score = search.best_score_
+            best_search = search
+
+    results_df = pd.DataFrame([
+        {
+            "model_name": r["model_name"],
+            "best_cv_score": r["best_cv_score"],
+            "best_sampler": r["best_sampler"],
+            "best_params": str(r["best_params"]),
+        }
+        for r in all_results
+    ]).sort_values("best_cv_score", ascending=False)
+
+    return best_search, results_df, all_results
+
 
 def main(
     data_dir: str, 
@@ -44,38 +119,34 @@ def main(
         if extract_V_columns_needed:
             v_columns = extract_relevant_V_columns(df_main, target_column, v_columns, threshold)
         else:
-            v_columns = V_COLUMNS_USED        
+            v_columns = V_COLUMNS       
 
     X_train, X_local_test = df_main[base_columns + v_columns].copy(), df_local_test[base_columns + v_columns].copy()
     y_train, y_local_test = df_main[target_column].copy(), df_local_test[target_column].copy()
-    train_val_id_pairs = temporal_train_val_split(df_main)
+    cv_splits = temporal_train_val_split(df_main)
     del df_main, df_local_test
     gc.collect()
 
-    avg_score = 0
-    for idx, (train_ids, val_ids) in enumerate(train_val_id_pairs):
-        X_tr, X_val = X_train.loc[train_ids], X_train.loc[val_ids]
-        y_tr, y_val = y_train.loc[train_ids], y_train.loc[val_ids]
-        
-        feature_pipeline = build_feature_pipeline()
-        pipeline = build_full_pipeline(feature_pipeline)
-        pipeline.fit(X_tr, y_tr)
+    cv_splits = temporal_train_val_split(df_main)
 
-        y_val_pred = pipeline.predict_proba(X_val)[:, 1]
-        fold_score = roc_auc_score(y_val, y_val_pred)
-        avg_score += fold_score
-        logger.info(f"CV Fold {idx} Score: {round(fold_score, 2)}")
+    best_search, results_df, all_results = run_model_search(
+        X_train=X_train,
+        y_train=y_train,
+        cv_splits=cv_splits,
+    )
 
-        del X_tr, X_val, y_tr, y_val, y_val_pred
-        gc.collect()
+    print(results_df)
 
-    avg_score /= len(train_val_id_pairs)
-    logger.info(f"Average CV Score: {round(avg_score, 2)}")
-
-    final_feature_pipeline = build_feature_pipeline()
-    final_pipeline = build_full_pipeline(final_feature_pipeline)
-    final_pipeline.fit(X_train, y_train)
-
-    y_test_pred = final_pipeline.predict_proba(X_local_test)[:, 1]    
+    best_pipeline = best_search.best_estimator_
+    y_test_pred = best_pipeline.predict_proba(X_local_test)[:, 1]
     final_score = roc_auc_score(y_local_test, y_test_pred)
-    logger.info(f"Final Test Score: {round(final_score, 2)}")
+
+    print("Best CV ROC-AUC:", best_search.best_score_)
+    print("Local test ROC-AUC:", final_score)
+
+    joblib.dump(best_pipeline, "artifacts/best_pipeline.joblib")
+
+    with open("artifacts/best_params.json", "w") as f:
+        json.dump(best_search.best_params_, f, indent=2, default=str)
+
+    results_df.to_csv("artifacts/model_comparison.csv", index=False)    

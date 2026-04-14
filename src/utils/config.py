@@ -15,7 +15,7 @@ BASE_COLUMNS = [
     *[f"D{i}" for i in range(1, 16)],
     *[f"M{i}" for i in range(1, 10)],
 ]
-V_COLUMNS_USED = [
+V_COLUMNS = [
     "V307", "V284", "V285", "V286", "V299", "V298", "V304", "V305", "V308", "V309", "V310", "V320",
     "V101", "V96", "V98", "V99", "V106", "V105", "V107", "V108", "V109", "V111", "V117", "V120",
     "V121", "V123", "V128", "V127", "V131", "V130", "V134", "V281", "V283", "V289", "V296", "V301",
@@ -42,7 +42,7 @@ NUMERICAL_COLUMNS = [
     *[f"D{i}" for i in range(1, 16)],
     *[f"id_{i}" for i in range(1, 27) if i not in [12, 15, 16, 23]],
     "id_32",
-    *V_COLUMNS_USED,
+    *V_COLUMNS,
 ]
 DROP_COLUMNS = [
     "TransactionDT", "D6", "D7", "D8", "D9", "D12", "D13", "D14",
