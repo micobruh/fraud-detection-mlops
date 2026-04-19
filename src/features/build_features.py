@@ -63,14 +63,6 @@ class DataFrameOrdinalEncoder(BaseEstimator, TransformerMixin):
             raise ValueError("DataFrameOrdinalEncoder is not fitted yet. Call fit() first.")
         
 
-from __future__ import annotations
-
-from typing import Any
-import pandas as pd
-import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin
-
-
 class NumericShiftFillTransformer(BaseEstimator, TransformerMixin):
     def __init__(
         self,

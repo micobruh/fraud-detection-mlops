@@ -1,7 +1,7 @@
 import pandas as pd
+import numpy as np
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import RandomizedSearchCV
-from sklearn.metrics import roc_auc_score
 from typing import List
 import joblib
 import json
@@ -21,6 +21,9 @@ from ..features import (
     DropColumnsTransformer, 
     extract_relevant_V_columns
 )
+from ..models import (
+    test_evaluation
+)
 from ..utils import (
     RANDOM_STATE, 
     TARGET_COLUMN, 
@@ -37,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 def build_feature_pipeline() -> Pipeline:
     return Pipeline([
-        ("numerical_shift_fill", NumericShiftFillTransformer(NUMERICAL_COLUMNS))
+        ("numerical_shift_fill", NumericShiftFillTransformer(NUMERICAL_COLUMNS)),
         ("ordinal_encode", DataFrameOrdinalEncoder(CATEGORICAL_COLUMNS, handle_unknown="use_encoded_value", unknown_value=-1)),
         ("normalize_D_columns", DColumnNormalizer()),
         ("frequency_encode_og_features", FrequencyEncoder(["addr1", "card1", "card2", "card3", "P_emaildomain"])),
@@ -134,15 +137,19 @@ def main(
         cv_splits=cv_splits,
     )
 
-    print(results_df)
-
     best_pipeline = best_search.best_estimator_
-    y_test_pred = best_pipeline.predict_proba(X_local_test)[:, 1]
-    final_score = roc_auc_score(y_local_test, y_test_pred)
+    cv_roc_auc_score = best_search.best_score_
+    y_test_score = best_pipeline.predict_proba(X_local_test)[:, 1]
+    y_test_pred = np.where(y_test_score >= 0.5, 1, 0)
+    final_roc_auc_score, final_f1_score, final_recall, final_precision, final_ap_score, final_accuracy = test_evaluation(y_local_test, y_test_score, y_test_pred)   
 
-    print("Best CV ROC-AUC:", best_search.best_score_)
-    print("Local test ROC-AUC:", final_score)
-
+    logger.info(f"Best Model CV ROC-AUC: {round(cv_roc_auc_score, 3)}")
+    logger.info(f"Best Model Local Test ROC-AUC: {round(final_roc_auc_score, 3)}")
+    logger.info(f"Best Model Local Test F1 Score: {round(final_f1_score, 3)}")
+    logger.info(f"Best Model Local Test Accuracy: {round(final_accuracy, 3)}")
+    logger.info(f"Best Model Local Test Recall: {round(final_recall, 3)}")
+    logger.info(f"Best Model Local Test Precision: {round(final_precision, 3)}")
+    logger.info(f"Best Model Local Test Average Precision Score: {round(final_ap_score, 3)}")    
     joblib.dump(best_pipeline, "artifacts/best_pipeline.joblib")
 
     with open("artifacts/best_params.json", "w") as f:

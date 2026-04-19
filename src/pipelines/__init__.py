@@ -1,3 +1,7 @@
+from .baseline_flow import (
+    baseline_evaluation
+)
+
 from .training_flow import (
     build_feature_pipeline,
     run_model_search,
@@ -5,6 +9,7 @@ from .training_flow import (
 )
 
 __all__ = [
+    "baseline_evaluation",
     "build_feature_pipeline",
     "run_model_search",
     "main"    

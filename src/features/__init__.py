@@ -5,7 +5,10 @@ from .build_features import (
     FrequencyEncoder,
     CombineColumnsTransformer,
     UIDAggregationTransformer,
-    DropColumnsTransformer,
+    DropColumnsTransformer
+)
+
+from .select_v_features import (
     extract_relevant_V_columns
 )
 
