@@ -45,7 +45,7 @@ NUMERICAL_COLUMNS = [
     *V_COLUMNS,
 ]
 DROP_COLUMNS = [
-    "TransactionDT", "D6", "D7", "D8", "D9", "D12", "D13", "D14",
+    "TransactionDT", "TransactionID", "D6", "D7", "D8", "D9", "D12", "D13", "D14",
     "C3", "M5", "id_08", "id_33",
     "card4", "id_07", "id_14", "id_21", "id_30", "id_32", "id_34",
     *["id_" + str(i) for i in range(22, 28)]

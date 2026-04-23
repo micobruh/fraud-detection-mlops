@@ -8,8 +8,7 @@ from .preprocess import (
     load_interim_data
 )
 from .split import (
-    temporal_balanced_train_test_split, 
-    temporal_train_val_split
+    temporal_train_val_test_split
 )
 
 _all__ = [
@@ -18,6 +17,5 @@ _all__ = [
     "reduce_memory_usage",
     "conversion",
     "load_interim_data",
-    "temporal_balanced_train_test_split",
-    "temporal_train_val_split",
+    "temporal_train_val_test_split",
 ]

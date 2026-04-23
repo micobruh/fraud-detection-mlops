@@ -43,7 +43,6 @@ class DataFrameOrdinalEncoder(BaseEstimator, TransformerMixin):
         self._check_is_fitted()
         self._validate_input(X)
 
-        X = X.copy()
         X[self.columns] = self.encoder_.transform(X[self.columns])
         return X
 
@@ -97,10 +96,17 @@ class NumericShiftFillTransformer(BaseEstimator, TransformerMixin):
         self._validate_input(X)
 
         X = X.copy()
+        if not self.columns_to_transform_:
+            return X
 
-        for col in self.columns_to_transform_:
-            X[col] = X[col] - np.float32(self.min_values_[col])
-            X[col] = X[col].fillna(self.fill_value).astype(self.dtype)
+        min_values = pd.Series(self.min_values_, dtype="float32")
+        transformed = (
+            X[self.columns_to_transform_]
+            .sub(min_values, axis=1)
+            .fillna(self.fill_value)
+            .astype(self.dtype)
+        )
+        X.loc[:, self.columns_to_transform_] = transformed
 
         return X
 
@@ -160,17 +166,13 @@ class DColumnNormalizer(BaseEstimator, TransformerMixin):
         X = X.copy()
 
         time_scaled = X[self.time_col] / np.float32(self.seconds_in_day)
-
-        for i in self.d_indices:
-            if i in self.exclude:
-                continue
-
-            source_col = f"D{i}"
-            new_col = f"{source_col}_normalized"
-
-            X[new_col] = (
-                np.floor(X[source_col] - time_scaled) + self.offset
-            ).astype(self.dtype)
+        source_cols = [f"D{i}" for i in self.d_indices if i not in self.exclude]
+        new_cols = [f"{col}_normalized" for col in source_cols]
+        normalized = (
+            np.floor(X[source_cols].sub(time_scaled, axis=0)) + self.offset
+        ).astype(self.dtype)
+        normalized.columns = new_cols
+        X[new_cols] = normalized
 
         return X
 
@@ -672,11 +674,17 @@ class DropColumnsTransformer(BaseEstimator, TransformerMixin):
             missing = [c for c in self.columns if c not in X_out.columns]
             if missing:
                 raise ValueError(f"Columns not found during transform: {missing}")
-            return X_out.drop(columns=self.columns)
+            if self.copy:
+                return X_out.drop(columns=self.columns)
+            X_out.drop(columns=self.columns, inplace=True)
+            return X_out
 
         # errors == "ignore"
         cols_to_drop = [c for c in self.columns if c in X_out.columns]
-        return X_out.drop(columns=cols_to_drop)
+        if self.copy:
+            return X_out.drop(columns=cols_to_drop)
+        X_out.drop(columns=cols_to_drop, inplace=True)
+        return X_out
 
     def get_feature_names_out(self, input_features=None):
         if input_features is None:

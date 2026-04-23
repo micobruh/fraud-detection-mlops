@@ -5,12 +5,12 @@ from .baseline_flow import (
 from .training_flow import (
     build_feature_pipeline,
     run_model_search,
-    main
+    training
 )
 
 __all__ = [
     "baseline_evaluation",
     "build_feature_pipeline",
     "run_model_search",
-    "main"    
+    "training"    
 ]

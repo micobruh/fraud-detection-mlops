@@ -8,8 +8,9 @@ from .build_features import (
     DropColumnsTransformer
 )
 
-from .select_v_features import (
-    extract_relevant_V_columns
+from .select_features import (
+    extract_relevant_V_columns,
+    determine_columns
 )
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "CombineColumnsTransformer",
     "UIDAggregationTransformer",
     "DropColumnsTransformer",
-    "extract_relevant_V_columns"
+    "extract_relevant_V_columns",
+    "determine_columns"
 ]

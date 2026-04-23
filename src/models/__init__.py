@@ -2,12 +2,14 @@ from .evaluate import (
     test_evaluation
 )
 from .train import (
-    candidate_configs,
-    build_full_pipeline
+    get_candidate_configs,
+    build_full_pipeline,
+    build_pipeline_from_config,
 )
 
 __all__ = [
     "test_evaluation",
-    "candidate_configs", 
-    "build_full_pipeline"
+    "get_candidate_configs",
+    "build_full_pipeline",
+    "build_pipeline_from_config",
 ]
