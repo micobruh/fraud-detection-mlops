@@ -218,18 +218,107 @@ def run_model_search(
     return results_df
 
 
+def shortlist_candidates(
+    results_df: pd.DataFrame,
+    max_candidates: int = 5,
+    roc_auc_tolerance: float = 0.005,
+    max_per_feature_set: int = 2,
+    max_per_model_name: int = 1,
+    max_per_sampler: int = 2,
+) -> pd.DataFrame:
+    if results_df.empty:
+        return results_df.copy()
+
+    sorted_results = results_df.sort_values(
+        by=[
+            "best_cv_roc_auc",
+            "best_cv_average_precision",
+            "best_cv_recall",
+            "best_cv_f1",
+        ],
+        ascending=False,
+    ).reset_index(drop=True)
+
+    best_roc_auc = float(sorted_results.iloc[0]["best_cv_roc_auc"])
+    eligible = sorted_results[
+        sorted_results["best_cv_roc_auc"] >= best_roc_auc - roc_auc_tolerance
+    ].copy()
+    if eligible.empty:
+        eligible = sorted_results.head(1).copy()
+
+    selected_rows = []
+    selected_indices = set()
+    feature_set_counts: dict[str, int] = {}
+    model_name_counts: dict[str, int] = {}
+    sampler_counts: dict[str, int] = {}
+
+    def can_select(candidate: pd.Series) -> bool:
+        feature_set_name = candidate["feature_set_name"]
+        model_name = candidate["model_name"]
+        sampler_name = candidate["best_sampler"]
+        return (
+            feature_set_counts.get(feature_set_name, 0) < max_per_feature_set
+            and model_name_counts.get(model_name, 0) < max_per_model_name
+            and sampler_counts.get(sampler_name, 0) < max_per_sampler
+        )
+
+    def add_candidate(candidate: pd.Series) -> None:
+        feature_set_name = candidate["feature_set_name"]
+        model_name = candidate["model_name"]
+        sampler_name = candidate["best_sampler"]
+        selected_rows.append(candidate.to_dict())
+        selected_indices.add(int(candidate.name))
+        feature_set_counts[feature_set_name] = feature_set_counts.get(feature_set_name, 0) + 1
+        model_name_counts[model_name] = model_name_counts.get(model_name, 0) + 1
+        sampler_counts[sampler_name] = sampler_counts.get(sampler_name, 0) + 1
+
+    add_candidate(sorted_results.iloc[0])
+
+    for _, candidate in eligible.iterrows():
+        if len(selected_rows) >= max_candidates:
+            break
+        if int(candidate.name) in selected_indices:
+            continue
+        if can_select(candidate):
+            add_candidate(candidate)
+
+    for _, candidate in sorted_results.iterrows():
+        if len(selected_rows) >= max_candidates:
+            break
+        if int(candidate.name) in selected_indices:
+            continue
+        if can_select(candidate):
+            add_candidate(candidate)
+
+    shortlist_df = pd.DataFrame(selected_rows)
+    shortlist_df = shortlist_df.sort_values(
+        by=[
+            "best_cv_roc_auc",
+            "best_cv_average_precision",
+            "best_cv_recall",
+            "best_cv_f1",
+        ],
+        ascending=False,
+    ).reset_index(drop=True)
+    shortlist_df["rank"] = range(1, len(shortlist_df) + 1)
+    return shortlist_df
+
+
 def save_top_candidates_metadata(
     top_candidates_df: pd.DataFrame,
     selected_columns: List[str],
     feature_set_name: str,
     threshold: float,
     search_smote: bool,
+    roc_auc_tolerance: float,
     output_path: str = "artifacts/top_candidates.json",
 ) -> None:
     output = {
         "feature_set_name": feature_set_name,
         "threshold": threshold,
         "search_smote": search_smote,
+        "shortlist_strategy": "performance_filtered_diverse_shortlist",
+        "roc_auc_tolerance": roc_auc_tolerance,
         "selected_columns": selected_columns,
         "top_k": len(top_candidates_df),
         "candidates": top_candidates_df.drop(columns=["rebuild_params"], errors="ignore").to_dict(orient="records"),
@@ -271,6 +360,7 @@ def training(
     search_smote: bool = DEFAULT_SEARCH_SMOTE,
     use_successive_halving: bool = True,
     top_k: int = 5,
+    shortlist_roc_auc_tolerance: float = 0.005,
     save_fitted_pipelines: bool = True,
     v_columns_cache_path: str | None = "artifacts/selected_v_columns.json",
 ) -> None:
@@ -286,7 +376,11 @@ def training(
     results_df = run_model_search(
         X_train, y_train, cv_splits, selected_columns, feature_set_name, search_smote, use_successive_halving
     )
-    top_candidates_df = results_df.head(top_k).copy()
+    top_candidates_df = shortlist_candidates(
+        results_df,
+        max_candidates=top_k,
+        roc_auc_tolerance=shortlist_roc_auc_tolerance,
+    )
 
     if not top_candidates_df.empty:
         best_candidate = top_candidates_df.iloc[0]
@@ -305,6 +399,7 @@ def training(
         feature_set_name,
         threshold,
         search_smote,
+        shortlist_roc_auc_tolerance,
     )
 
     if save_fitted_pipelines:
