@@ -4,6 +4,8 @@ RANDOM_STATE = 42
 TARGET_COLUMN = "isFraud"
 ID_COLUMN = "TransactionID"
 TIME_COLUMN = "TransactionDT"
+DEFAULT_FEATURE_SET = "base_selected_v"
+DEFAULT_SEARCH_SMOTE = False
 
 BASE_COLUMNS = [
     "TransactionAmt", "ProductCD",
@@ -50,3 +52,24 @@ DROP_COLUMNS = [
     "card4", "id_07", "id_14", "id_21", "id_30", "id_32", "id_34",
     *["id_" + str(i) for i in range(22, 28)]
 ]
+
+FEATURE_SETS = {
+    "base": {
+        "use_selected_v": False,
+        "use_uid_features": False,
+    },
+    "base_selected_v": {
+        "use_selected_v": True,
+        "use_uid_features": False,
+    },
+    "base_selected_v_engineered": {
+        "use_selected_v": True,
+        "use_uid_features": True,
+    },
+}
+
+UID_COMBINE_COLUMNS = ["card1", "addr1"]
+UID_COMBINED_COLUMN = "card1_addr1"
+UID_AGGREGATION_MAIN_COLUMNS = ["TransactionAmt"]
+UID_AGGREGATION_UID_COLUMNS = [UID_COMBINED_COLUMN, "card1", "addr1"]
+UID_AGGREGATION_FUNCTIONS = ["count", "mean", "std", "min", "max"]

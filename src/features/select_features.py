@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
-from ..utils import TARGET_COLUMN, BASE_COLUMNS, V_COLUMNS
+from ..utils import TARGET_COLUMN, BASE_COLUMNS, V_COLUMNS, FEATURE_SETS, DEFAULT_FEATURE_SET
 
 logger = logging.getLogger(__name__)
 
@@ -146,13 +146,17 @@ def extract_relevant_V_columns(
 
 def determine_columns(
     df_main: pd.DataFrame, 
-    extract_V_columns_needed: bool = False, 
+    feature_set_name: str = DEFAULT_FEATURE_SET,
     threshold: float = 0.65,
     cache_path: str | Path | None = "artifacts/selected_v_columns.json",
 ) -> List[str]:
+    feature_config = FEATURE_SETS.get(feature_set_name)
+    if feature_config is None:
+        raise ValueError(f"Unknown feature set: {feature_set_name}")
+
     base_columns = BASE_COLUMNS
-    if extract_V_columns_needed:
+    if feature_config["use_selected_v"]:
         v_columns = extract_relevant_V_columns(df_main, threshold, cache_path)
     else:
-        v_columns = V_COLUMNS    
+        v_columns = []
     return base_columns + v_columns

@@ -6,6 +6,7 @@ from ..features import (
 )
 from ..utils import (
     START_DATE,
+    DEFAULT_FEATURE_SET,
     TARGET_COLUMN, 
     TIME_COLUMN,   
     DROP_COLUMNS  
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def temporal_train_val_test_split(
     df: pd.DataFrame, 
-    extract_V_columns_needed: bool = False,
+    feature_set_name: str = DEFAULT_FEATURE_SET,
     threshold: float = 0.65,
     v_columns_cache_path: str | None = "artifacts/selected_v_columns.json",
 ) -> Tuple[
@@ -60,7 +61,7 @@ def temporal_train_val_test_split(
     # First 4 months are used for initial training data and batch offline cross validation
     # 5th month is used for streaming online validation window
     # 6th month is used for streaming online test window
-    columns = determine_columns(df, extract_V_columns_needed, threshold, v_columns_cache_path)
+    columns = determine_columns(df, feature_set_name, threshold, v_columns_cache_path)
     df_main = df.loc[all_train_val_id_pairs[-2][0]]
     df_stream_val = df.loc[all_train_val_id_pairs[-2][1]]
     df_stream_test = df.loc[all_train_val_id_pairs[-1][1]]

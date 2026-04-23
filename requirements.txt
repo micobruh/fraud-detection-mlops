@@ -1,0 +1,11 @@
+numpy
+pandas
+scipy
+scikit-learn
+imbalanced-learn
+lightgbm
+xgboost
+joblib
+tqdm
+pyarrow
+pytest

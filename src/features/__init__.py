@@ -5,6 +5,7 @@ from .build_features import (
     FrequencyEncoder,
     CombineColumnsTransformer,
     UIDAggregationTransformer,
+    UIDAggregationAppendTransformer,
     DropColumnsTransformer
 )
 
@@ -20,6 +21,7 @@ __all__ = [
     "FrequencyEncoder",
     "CombineColumnsTransformer",
     "UIDAggregationTransformer",
+    "UIDAggregationAppendTransformer",
     "DropColumnsTransformer",
     "extract_relevant_V_columns",
     "determine_columns"

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import OrdinalEncoder
-from ..utils import TIME_COLUMN
+from ..utils import TIME_COLUMN, UID_COMBINE_COLUMNS, UID_COMBINED_COLUMN
 import logging
 
 logger = logging.getLogger(__name__)
@@ -626,6 +626,82 @@ class UIDAggregationTransformer(BaseEstimator, TransformerMixin):
         if pd.isna(value):
             return float(self.fill_value)
         return float(value)
+    
+
+class UIDAggregationAppendTransformer(BaseEstimator, TransformerMixin):
+    """
+    Append leakage-safe UID aggregation features to the existing DataFrame.
+
+    The temporary combined UID key is created only inside fit/transform and is
+    never returned, so it cannot leak through to the model input.
+    """
+
+    def __init__(
+        self,
+        main_columns: list[str],
+        uid_columns: list[str],
+        aggregations: Iterable[str],
+        combined_uid_columns: list[str] | None = None,
+        combined_uid_name: str = UID_COMBINED_COLUMN,
+        fill_value: float = -1.0,
+        dtype: str = "float32",
+    ) -> None:
+        self.main_columns = main_columns
+        self.uid_columns = uid_columns
+        self.aggregations = list(aggregations)
+        self.combined_uid_columns = combined_uid_columns if combined_uid_columns is not None else list(UID_COMBINE_COLUMNS)
+        self.combined_uid_name = combined_uid_name
+        self.fill_value = fill_value
+        self.dtype = dtype
+
+    def fit(self, X: pd.DataFrame, y: Any = None) -> "UIDAggregationAppendTransformer":
+        temp = self._prepare_working_frame(X)
+        self.uid_aggregation_transformer_ = UIDAggregationTransformer(
+            main_columns=self.main_columns,
+            uid_columns=self.uid_columns,
+            aggregations=self.aggregations,
+            fill_value=self.fill_value,
+            dtype=self.dtype,
+        )
+        self.uid_aggregation_transformer_.fit(temp)
+        self.feature_names_out_ = list(self.uid_aggregation_transformer_.get_feature_names_out())
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        self._check_is_fitted()
+        temp = self._prepare_working_frame(X)
+        aggregated = self.uid_aggregation_transformer_.transform(temp)
+        X_out = X.copy()
+        X_out[aggregated.columns] = aggregated
+        return X_out
+
+    def get_feature_names_out(self, input_features=None):
+        self._check_is_fitted()
+        if input_features is None:
+            return np.asarray(self.feature_names_out_, dtype=object)
+        return np.asarray(list(input_features) + self.feature_names_out_, dtype=object)
+
+    def _prepare_working_frame(self, X: pd.DataFrame) -> pd.DataFrame:
+        if not isinstance(X, pd.DataFrame):
+            raise TypeError("UIDAggregationAppendTransformer expects a pandas DataFrame.")
+
+        required = set(self.main_columns) | set(self.uid_columns) | set(self.combined_uid_columns)
+        required.discard(self.combined_uid_name)
+        missing = [col for col in required if col not in X.columns]
+        if missing:
+            raise ValueError(f"Missing required columns: {missing}")
+
+        temp = X[list(required)].copy()
+        temp[self.combined_uid_name] = (
+            temp[self.combined_uid_columns]
+            .astype(str)
+            .agg("_".join, axis=1)
+        )
+        return temp
+
+    def _check_is_fitted(self) -> None:
+        if not hasattr(self, "uid_aggregation_transformer_"):
+            raise ValueError("UIDAggregationAppendTransformer is not fitted yet. Call fit() first.")
     
 
 class DropColumnsTransformer(BaseEstimator, TransformerMixin):
