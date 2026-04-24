@@ -5,6 +5,7 @@ scikit-learn
 imbalanced-learn
 lightgbm
 xgboost
+catboost
 joblib
 tqdm
 pyarrow

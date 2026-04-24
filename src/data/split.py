@@ -75,9 +75,12 @@ def temporal_train_val_test_split(
         val_pos = [train_index_to_pos[idx] for idx in val_ids if idx in train_index_to_pos]
         cv_splits.append((train_pos, val_pos))
 
-    X_train = df_main[columns + DROP_COLUMNS]
-    X_stream_val = df_stream_val[columns + DROP_COLUMNS]
-    X_stream_test = df_stream_test[columns + DROP_COLUMNS]
+    available_drop_columns = [col for col in DROP_COLUMNS if col in df.columns]
+    model_input_columns = list(dict.fromkeys(columns + available_drop_columns))
+
+    X_train = df_main[model_input_columns]
+    X_stream_val = df_stream_val[model_input_columns]
+    X_stream_test = df_stream_test[model_input_columns]
     y_train = df_main[TARGET_COLUMN]
     y_stream_val = df_stream_val[TARGET_COLUMN]
     y_stream_test = df_stream_test[TARGET_COLUMN]   

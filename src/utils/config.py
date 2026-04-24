@@ -6,6 +6,7 @@ ID_COLUMN = "TransactionID"
 TIME_COLUMN = "TransactionDT"
 DEFAULT_FEATURE_SET = "base_selected_v"
 DEFAULT_SEARCH_SMOTE = False
+DEFAULT_SEARCH_N_JOBS = 1
 
 BASE_COLUMNS = [
     "TransactionAmt", "ProductCD",

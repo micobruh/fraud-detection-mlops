@@ -725,7 +725,7 @@ class DropColumnsTransformer(BaseEstimator, TransformerMixin):
         errors: str = "ignore",
         copy: bool = True,
     ) -> None:
-        self.columns = list(columns)
+        self.columns = columns
         self.errors = errors
         self.copy = copy
 

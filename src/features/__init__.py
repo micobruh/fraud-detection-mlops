@@ -13,6 +13,9 @@ from .select_features import (
     extract_relevant_V_columns,
     determine_columns
 )
+from .pipeline import (
+    build_feature_pipeline,
+)
 
 __all__ = [
     "NumericShiftFillTransformer",
@@ -24,5 +27,6 @@ __all__ = [
     "UIDAggregationAppendTransformer",
     "DropColumnsTransformer",
     "extract_relevant_V_columns",
-    "determine_columns"
+    "determine_columns",
+    "build_feature_pipeline",
 ]

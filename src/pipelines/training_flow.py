@@ -1,8 +1,5 @@
 import pandas as pd
 import numpy as np
-from sklearn.pipeline import Pipeline
-from sklearn.experimental import enable_halving_search_cv  # noqa: F401
-from sklearn.model_selection import HalvingRandomSearchCV
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.metrics import make_scorer, f1_score, accuracy_score, recall_score, precision_score
 from typing import List
@@ -17,11 +14,7 @@ from .cv_logging import (
     log_top_cv_candidates,
 )
 from ..features import (
-    NumericShiftFillTransformer, 
-    DataFrameOrdinalEncoder, 
-    DColumnNormalizer, 
-    DropColumnsTransformer,
-    UIDAggregationAppendTransformer,
+    build_feature_pipeline,
 )
 from ..models import (
     get_candidate_configs,
@@ -31,13 +24,7 @@ from ..utils import (
     RANDOM_STATE, 
     DEFAULT_FEATURE_SET,
     DEFAULT_SEARCH_SMOTE,
-    FEATURE_SETS,
-    CATEGORICAL_COLUMNS, 
-    NUMERICAL_COLUMNS, 
-    DROP_COLUMNS,
-    UID_AGGREGATION_MAIN_COLUMNS,
-    UID_AGGREGATION_UID_COLUMNS,
-    UID_AGGREGATION_FUNCTIONS,
+    DEFAULT_SEARCH_N_JOBS,
 )
 import logging
 
@@ -82,39 +69,6 @@ def filter_valid_cv_splits(cv_splits, y_train):
     return valid_splits
 
 
-def build_feature_pipeline(selected_columns: List[str], feature_set_name: str = DEFAULT_FEATURE_SET) -> Pipeline:
-    feature_config = FEATURE_SETS.get(feature_set_name)
-    if feature_config is None:
-        raise ValueError(f"Unknown feature set: {feature_set_name}")
-
-    numeric_columns = [col for col in NUMERICAL_COLUMNS if col in selected_columns + DROP_COLUMNS]
-    categorical_columns = [col for col in CATEGORICAL_COLUMNS if col in selected_columns and col not in DROP_COLUMNS]
-    steps = [
-        # Keep the feature pipeline row-local and stateless at inference time.
-        ("numerical_shift_fill", NumericShiftFillTransformer(numeric_columns)),
-        ("normalize_D_columns", DColumnNormalizer()),
-    ]
-
-    if feature_config["use_uid_features"]:
-        steps.append((
-            "append_uid_aggregates",
-            UIDAggregationAppendTransformer(
-                main_columns=UID_AGGREGATION_MAIN_COLUMNS,
-                uid_columns=UID_AGGREGATION_UID_COLUMNS,
-                aggregations=UID_AGGREGATION_FUNCTIONS,
-                fill_value=-1.0,
-                dtype="float32",
-            ),
-        ))
-
-    steps.extend([
-        ("drop_columns", DropColumnsTransformer(DROP_COLUMNS, copy=False)),
-        ("ordinal_encode", DataFrameOrdinalEncoder(categorical_columns, handle_unknown="use_encoded_value", unknown_value=-1)),
-    ])
-
-    return Pipeline(steps, verbose=True)
-
-
 def serialize_search_params(best_params):
     serialized = {}
 
@@ -144,7 +98,10 @@ def run_model_search(
     selected_columns,
     feature_set_name: str = DEFAULT_FEATURE_SET,
     search_smote: bool = DEFAULT_SEARCH_SMOTE,
-    use_successive_halving: bool = True,
+    use_successive_halving: bool = False,
+    search_n_jobs: int = DEFAULT_SEARCH_N_JOBS,
+    save_incremental: bool = True,
+    incremental_save_path: str = "artifacts/model_comparison_incremental.csv",
 ):
     all_results = []
     valid_cv_splits = filter_valid_cv_splits(cv_splits, y_train)
@@ -154,33 +111,40 @@ def run_model_search(
         feature_set_name,
         search_smote=search_smote,
     )
-    search_cls = HalvingRandomSearchCV if use_successive_halving else RandomizedSearchCV
+    if use_successive_halving:
+        logger.warning(
+            "use_successive_halving=True is ignored because multi-metric CV requires RandomizedSearchCV."
+        )
+    
+    # Initialize incremental save file
+    if save_incremental:
+        Path(incremental_save_path).parent.mkdir(parents=True, exist_ok=True)
 
-    for config in candidate_configs:
+    for config_idx, config in enumerate(candidate_configs, start=1):
         search_kwargs = {
             "estimator": config["pipeline"],
             "param_distributions": config["param_distributions"],
             "scoring": CV_SCORING,
             "cv": valid_cv_splits,
-            "n_jobs": -1,
+            "n_jobs": search_n_jobs,
             "refit": "roc_auc",
             "random_state": RANDOM_STATE,
             "verbose": 2,
             "error_score": "raise",
         }
-        if use_successive_halving:
-            search_kwargs.update({
-                "n_candidates": config.get("n_candidates", "exhaust"),
-                "factor": config.get("factor", 3),
-                "aggressive_elimination": True,
-            })
-        else:
-            search_kwargs.update({
-                "n_iter": config.get("n_iter", 20),
-                "pre_dispatch": "n_jobs",
-            })
+        search_kwargs.update({
+            "n_iter": config.get("n_iter", 20),
+            "pre_dispatch": "n_jobs",
+        })
 
-        search = search_cls(**search_kwargs)
+        logger.info(
+            "Training model %d/%d: %s",
+            config_idx,
+            len(candidate_configs),
+            config["name"],
+        )
+
+        search = RandomizedSearchCV(**search_kwargs)
 
         search.fit(X_train, y_train)
 
@@ -190,7 +154,7 @@ def run_model_search(
         serialized_best_params = serialize_search_params(best_params)
         sampler_used = best_params.get("sampler", "passthrough")
 
-        all_results.append({
+        result_record = {
             "model_name": config["name"],
             "feature_set_name": feature_set_name,
             "search_smote": search_smote,
@@ -205,7 +169,23 @@ def run_model_search(
             "best_params": serialized_best_params,
             "rebuild_params": best_params,
             "best_sampler": str(sampler_used),
-        })
+        }
+
+        all_results.append(result_record)
+        
+        # Save incrementally after each model
+        if save_incremental:
+            incremental_df = (
+                pd.DataFrame(all_results)
+                .sort_values("best_cv_score", ascending=False)
+                .reset_index(drop=True)
+            )
+            incremental_df.insert(0, "rank", incremental_df.index + 1)
+            incremental_df.drop(columns=["rebuild_params"], errors="ignore").to_csv(
+                incremental_save_path,
+                index=False,
+            )
+            logger.info("Saved incremental results to %s", incremental_save_path)
 
         del search
 
@@ -222,9 +202,9 @@ def shortlist_candidates(
     results_df: pd.DataFrame,
     max_candidates: int = 5,
     roc_auc_tolerance: float = 0.005,
-    max_per_feature_set: int = 2,
+    max_per_feature_set: int = 5,
     max_per_model_name: int = 1,
-    max_per_sampler: int = 2,
+    max_per_sampler: int = 5,
 ) -> pd.DataFrame:
     if results_df.empty:
         return results_df.copy()
@@ -358,10 +338,12 @@ def training(
     feature_set_name: str = DEFAULT_FEATURE_SET,
     threshold: float = 0.65,
     search_smote: bool = DEFAULT_SEARCH_SMOTE,
-    use_successive_halving: bool = True,
+    use_successive_halving: bool = False,
+    search_n_jobs: int = DEFAULT_SEARCH_N_JOBS,
     top_k: int = 5,
     shortlist_roc_auc_tolerance: float = 0.005,
     save_fitted_pipelines: bool = True,
+    save_incremental: bool = True,
     v_columns_cache_path: str | None = "artifacts/selected_v_columns.json",
 ) -> None:
     df = load_interim_data(data_dir)     
@@ -374,7 +356,15 @@ def training(
         )
 
     results_df = run_model_search(
-        X_train, y_train, cv_splits, selected_columns, feature_set_name, search_smote, use_successive_halving
+        X_train, 
+        y_train, 
+        cv_splits, 
+        selected_columns, 
+        feature_set_name, 
+        search_smote, 
+        use_successive_halving,
+        search_n_jobs=search_n_jobs,
+        save_incremental=save_incremental,
     )
     top_candidates_df = shortlist_candidates(
         results_df,
