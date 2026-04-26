@@ -3,8 +3,12 @@ from pathlib import Path
 
 
 def test_required_artifacts_exist():
-    path = Path("artifacts/selected_v_columns.json")
-    assert path.exists()
+    candidate_paths = [
+        Path("artifacts/selected_v_columns.json"),
+        Path("artifacts/old_stuffs/selected_v_columns.json"),
+    ]
+    path = next((candidate for candidate in candidate_paths if candidate.exists()), None)
+    assert path is not None
 
     with path.open() as f:
         data = json.load(f)

@@ -24,6 +24,7 @@ from ..utils import (
     DEFAULT_FEATURE_SET,
     DEFAULT_SEARCH_SMOTE,
     DEFAULT_SEARCH_N_JOBS,
+    FEATURE_SETS,
     MLFLOW_EXPERIMENT_NAME,
 )
 
@@ -42,9 +43,9 @@ CV_SCORING = {
 
 class TrainingConfig(BaseModel):
     data_dir: str | Path
-    feature_set_name: str = "base_selected_v"
+    feature_set_names: list[str] = Field(default_factory=lambda: list(FEATURE_SETS))
     threshold: float = Field(default=0.65, ge=0.5, le=1.0)
-    search_smote: bool = True
+    search_smote_options: list[bool] = Field(default_factory=lambda: [False, True])
     use_successive_halving: bool = False
     search_n_jobs: int = Field(default=1, ge=1)
     top_k: int = Field(default=5, ge=1)
@@ -73,14 +74,27 @@ class ModelSearchResult(BaseModel):
 
 
 class TopCandidatesMetadata(BaseModel):
-    feature_set_name: str
+    feature_set_names: list[str]
     threshold: float = Field(ge=0.5, le=1.0)
-    search_smote: bool
+    search_smote_options: list[bool]
     shortlist_strategy: Literal["performance_filtered_diverse_shortlist"]
     roc_auc_tolerance: float = Field(ge=0.0)
-    selected_columns: list[str]
+    selected_columns_by_feature_set: dict[str, list[str]]
     top_k: int = Field(ge=0)
     candidates: list[dict[str, Any]]
+
+
+def normalize_feature_set_names(feature_set_names: list[str] | None) -> list[str]:
+    names = feature_set_names or list(FEATURE_SETS)
+    unknown_names = sorted(set(names) - set(FEATURE_SETS))
+    if unknown_names:
+        raise ValueError(f"Unknown feature set(s): {unknown_names}")
+    return list(dict.fromkeys(names))
+
+
+def normalize_search_smote_options(search_smote_options: list[bool] | None) -> list[bool]:
+    options = search_smote_options or [False, True]
+    return list(dict.fromkeys(bool(option) for option in options))
 
 
 def filter_valid_cv_splits(cv_splits, y_train):
@@ -174,7 +188,11 @@ def run_model_search(
 
     mlflow.sklearn.autolog(log_models=False)
     for config_idx, config in enumerate(candidate_configs, start=1):
-        with mlflow.start_run(run_name=f"search-{config['name']}", nested=True):
+        smote_label = "with-smote" if search_smote else "without-smote"
+        with mlflow.start_run(
+            run_name=f"search-{feature_set_name}-{smote_label}-{config['name']}",
+            nested=True,
+        ):
             mlflow.log_params({
                 "model_name": config["name"],
                 "feature_set_name": feature_set_name,
@@ -270,7 +288,9 @@ def run_model_search(
             )      
 
             cv_results_df = pd.DataFrame(search.cv_results_)
-            cv_results_path = f"artifacts/cv_results_{config['name']}.csv"
+            cv_results_path = (
+                f"artifacts/cv_results_{feature_set_name}_{smote_label}_{config['name']}.csv"
+            )
             cv_results_df.to_csv(cv_results_path, index=False)
             mlflow.log_artifact(cv_results_path, artifact_path="cv_results")
             del search                  
@@ -372,20 +392,20 @@ def shortlist_candidates(
 
 def save_top_candidates_metadata(
     top_candidates_df: pd.DataFrame,
-    selected_columns: List[str],
-    feature_set_name: str,
+    selected_columns_by_feature_set: dict[str, list[str]],
+    feature_set_names: list[str],
     threshold: float,
-    search_smote: bool,
+    search_smote_options: list[bool],
     roc_auc_tolerance: float,
     output_path: str = "artifacts/top_candidates.json",
 ) -> None:
     metadata = TopCandidatesMetadata(
-        feature_set_name=feature_set_name,
+        feature_set_names=feature_set_names,
         threshold=threshold,
-        search_smote=search_smote,
+        search_smote_options=search_smote_options,
         shortlist_strategy="performance_filtered_diverse_shortlist",
         roc_auc_tolerance=roc_auc_tolerance,
-        selected_columns=selected_columns,
+        selected_columns_by_feature_set=selected_columns_by_feature_set,
         top_k=len(top_candidates_df),
         candidates=top_candidates_df.drop(columns=["rebuild_params"], errors="ignore").to_dict(orient="records"),
     )
@@ -397,13 +417,16 @@ def save_top_candidates_metadata(
 
 def fit_and_save_top_candidates(
     top_candidates_df: pd.DataFrame,
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    selected_columns: List[str],
-    feature_set_name: str,
-    search_smote: bool,
+    training_data_by_feature_set: dict[str, dict[str, Any]],
 ) -> None:
     for candidate in top_candidates_df.to_dict(orient="records"):
+        feature_set_name = candidate["feature_set_name"]
+        training_data = training_data_by_feature_set[feature_set_name]
+        selected_columns = training_data["selected_columns"]
+        X_train = training_data["X_train"]
+        y_train = training_data["y_train"]
+        search_smote = candidate["search_smote"]
+
         pipeline = build_pipeline_from_config(
             selected_columns,
             feature_set_name,
@@ -428,8 +451,10 @@ def fit_and_save_top_candidates(
 def training(
     data_dir: str, 
     feature_set_name: str = DEFAULT_FEATURE_SET,
+    feature_set_names: list[str] | None = None,
     threshold: float = 0.65,
     search_smote: bool = DEFAULT_SEARCH_SMOTE,
+    search_smote_options: list[bool] | None = None,
     use_successive_halving: bool = False,
     search_n_jobs: int = DEFAULT_SEARCH_N_JOBS,
     top_k: int = 5,
@@ -437,11 +462,22 @@ def training(
     save_incremental: bool = True,
     v_columns_cache_path: str | None = "artifacts/selected_v_columns.json",
 ) -> None:
+    requested_feature_set_names = feature_set_names
+    if requested_feature_set_names is None and feature_set_name != DEFAULT_FEATURE_SET:
+        requested_feature_set_names = [feature_set_name]
+
+    requested_search_smote_options = search_smote_options
+    if requested_search_smote_options is None and search_smote != DEFAULT_SEARCH_SMOTE:
+        requested_search_smote_options = [search_smote]
+
+    resolved_feature_set_names = normalize_feature_set_names(requested_feature_set_names)
+    resolved_search_smote_options = normalize_search_smote_options(requested_search_smote_options)
+
     training_config = TrainingConfig(
         data_dir=data_dir,
-        feature_set_name=feature_set_name,
+        feature_set_names=resolved_feature_set_names,
         threshold=threshold,
-        search_smote=search_smote,
+        search_smote_options=resolved_search_smote_options,
         use_successive_halving=use_successive_halving,
         search_n_jobs=search_n_jobs,
         top_k=top_k,
@@ -454,57 +490,120 @@ def training(
 
     with mlflow.start_run(run_name="offline-full-batch-training"):  
         mlflow.log_params({
-            "feature_set_name": training_config.feature_set_name,
+            "feature_set_names": ",".join(training_config.feature_set_names),
             "threshold": training_config.threshold,
-            "search_smote": training_config.search_smote,
+            "search_smote_options": ",".join(
+                str(option) for option in training_config.search_smote_options
+            ),
             "use_successive_halving": training_config.use_successive_halving,
             "search_n_jobs": training_config.search_n_jobs,
             "top_k": training_config.top_k,
             "shortlist_roc_auc_tolerance": training_config.shortlist_roc_auc_tolerance,
         })        
 
-        df = load_interim_data(training_config.data_dir)     
-        cv_splits, selected_columns, X_train, _, _, y_train, _, _ = \
-            temporal_train_val_test_split(
-                df,
-                training_config.feature_set_name,
-                training_config.threshold,
-                training_config.v_columns_cache_path,
-            )
-        
-        mlflow.log_params({
-            "num_train_rows": len(X_train),
-            "num_input_columns": X_train.shape[1],
-            "num_selected_columns": len(selected_columns),
-            "num_cv_splits": len(cv_splits),
-        })
+        df = load_interim_data(training_config.data_dir)
+        all_results = []
+        training_data_by_feature_set: dict[str, dict[str, Any]] = {}
 
-        mlflow.log_metric("train_positive_rate", float(y_train.mean()))  
+        for feature_set in training_config.feature_set_names:
+            cv_splits, selected_columns, X_train, _, _, y_train, _, _ = \
+                temporal_train_val_test_split(
+                    df,
+                    feature_set,
+                    training_config.threshold,
+                    training_config.v_columns_cache_path,
+                )
 
-        results_df = run_model_search(
-            X_train, 
-            y_train, 
-            cv_splits, 
-            selected_columns, 
-            feature_set_name=training_config.feature_set_name, 
-            search_smote=training_config.search_smote, 
-            use_successive_halving=training_config.use_successive_halving,
-            search_n_jobs=training_config.search_n_jobs,
-            save_incremental=training_config.save_incremental,
+            training_data_by_feature_set[feature_set] = {
+                "cv_splits": cv_splits,
+                "selected_columns": selected_columns,
+                "X_train": X_train,
+                "y_train": y_train,
+            }
+
+            for smote_enabled in training_config.search_smote_options:
+                smote_label = "with-smote" if smote_enabled else "without-smote"
+                with mlflow.start_run(
+                    run_name=f"feature-set-{feature_set}-{smote_label}",
+                    nested=True,
+                ):
+                    mlflow.log_params({
+                        "feature_set_name": feature_set,
+                        "threshold": training_config.threshold,
+                        "search_smote": smote_enabled,
+                        "num_train_rows": len(X_train),
+                        "num_input_columns": X_train.shape[1],
+                        "num_selected_columns": len(selected_columns),
+                        "num_cv_splits": len(cv_splits),
+                    })
+                    mlflow.log_metric("train_positive_rate", float(y_train.mean()))
+
+                    results_df = run_model_search(
+                        X_train,
+                        y_train,
+                        cv_splits,
+                        selected_columns,
+                        feature_set_name=feature_set,
+                        search_smote=smote_enabled,
+                        use_successive_halving=training_config.use_successive_halving,
+                        search_n_jobs=training_config.search_n_jobs,
+                        save_incremental=False,
+                    )
+                    all_results.extend(results_df.drop(columns=["rank"]).to_dict(orient="records"))
+
+                    if save_incremental:
+                        incremental_results_df = (
+                            pd.DataFrame(all_results)
+                            .sort_values("best_cv_score", ascending=False)
+                            .reset_index(drop=True)
+                        )
+                        incremental_results_df.insert(0, "rank", incremental_results_df.index + 1)
+                        save_model_comparison(
+                            incremental_results_df,
+                            "artifacts/model_comparison_incremental.csv",
+                        )
+
+        results_df = (
+            pd.DataFrame(all_results)
+            .sort_values("best_cv_score", ascending=False)
+            .reset_index(drop=True)
         )
+        results_df.insert(0, "rank", results_df.index + 1)
         save_model_comparison(results_df)
+
+        mlflow.log_params({
+            "num_feature_set_versions": len(training_config.feature_set_names),
+            "num_smote_versions": len(training_config.search_smote_options),
+            "num_model_search_results": len(results_df),
+        })
+        if not results_df.empty:
+            mlflow.log_metrics({
+                "best_overall_cv_roc_auc": results_df.iloc[0]["best_cv_roc_auc"],
+                "best_overall_cv_average_precision": results_df.iloc[0]["best_cv_average_precision"],
+                "best_overall_cv_f1": results_df.iloc[0]["best_cv_f1"],
+                "best_overall_cv_recall": results_df.iloc[0]["best_cv_recall"],
+                "best_overall_cv_precision": results_df.iloc[0]["best_cv_precision"],
+                "best_overall_cv_accuracy": results_df.iloc[0]["best_cv_accuracy"],
+            })
+
+        selected_columns_by_feature_set = {
+            feature_set: data["selected_columns"]
+            for feature_set, data in training_data_by_feature_set.items()
+        }
 
         top_candidates_df = shortlist_candidates(
             results_df,
             max_candidates=training_config.top_k,
             roc_auc_tolerance=training_config.shortlist_roc_auc_tolerance,
+            max_per_feature_set=training_config.top_k,
+            max_per_sampler=training_config.top_k,
         )
         save_top_candidates_metadata(
             top_candidates_df,
-            selected_columns,
-            training_config.feature_set_name,
+            selected_columns_by_feature_set,
+            training_config.feature_set_names,
             training_config.threshold,
-            training_config.search_smote,
+            training_config.search_smote_options,
             training_config.shortlist_roc_auc_tolerance,
         )
         log_top_cv_candidates(logger, top_candidates_df, training_config.top_k)
@@ -513,6 +612,8 @@ def training(
             best_candidate = top_candidates_df.iloc[0]
             mlflow.log_params({
                 "best_model_name": best_candidate["model_name"],
+                "best_feature_set_name": best_candidate["feature_set_name"],
+                "best_search_smote": best_candidate["search_smote"],
                 "best_sampler": best_candidate["best_sampler"],
             })
             mlflow.log_metrics({
@@ -525,11 +626,7 @@ def training(
             })      
             fit_and_save_top_candidates(
                 top_candidates_df,
-                X_train,
-                y_train,
-                selected_columns,
-                training_config.feature_set_name,
-                training_config.search_smote,
+                training_data_by_feature_set,
             )
 
         mlflow.log_artifact("artifacts/model_comparison.csv")

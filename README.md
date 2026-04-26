@@ -26,7 +26,9 @@ Build the training image from the repository root:
 docker build -t fraud-detection-training:local .
 ```
 
-Run the training flow:
+To view MLflow while training is running, use two terminals.
+
+Terminal 1, start the training flow:
 
 ```bash
 docker run --rm \
@@ -38,19 +40,29 @@ docker run --rm \
 
 The Dockerfile default command is `python main.py`, so the command above starts the model training flow. The mounted directories provide the real local dataset and persist MLflow runs and generated artifacts after the container exits.
 
-To run the test suite inside the same image:
-
-```bash
-docker run --rm fraud-detection-training:local pytest
-```
-
-To inspect MLflow runs locally after training:
+Terminal 2, start the MLflow UI:
 
 ```bash
 mlflow ui --backend-store-uri mlruns
 ```
 
-Then open `http://127.0.0.1:5000`.
+Then open `http://127.0.0.1:5000`. Refresh the page while training runs to see new runs, metrics, params, and artifacts appear.
+
+If MLflow is not installed in the local Python environment, run the UI from Docker instead:
+
+```bash
+docker run --rm \
+  -p 5000:5000 \
+  -v "$PWD/mlruns:/app/mlruns" \
+  fraud-detection-training:local \
+  mlflow ui --backend-store-uri /app/mlruns --host 0.0.0.0 --port 5000
+```
+
+To run the test suite inside the same image:
+
+```bash
+docker run --rm fraud-detection-training:local pytest
+```
 
 Note: mounting `artifacts:/app/artifacts` allows training to update files in the local `artifacts/` directory.
 
