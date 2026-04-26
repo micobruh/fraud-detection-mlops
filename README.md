@@ -48,6 +48,26 @@ mlflow ui --backend-store-uri mlruns
 
 Then open `http://127.0.0.1:5000`. Refresh the page while training runs to see new runs, metrics, params, and artifacts appear.
 
+If MLflow fails with `Address already in use`, port `5000` is already occupied. Check the existing process:
+
+```bash
+lsof -i :5000
+```
+
+If an existing MLflow UI is already running, keep using `http://127.0.0.1:5000`. Otherwise, stop the old process:
+
+```bash
+kill <PID>
+```
+
+or start MLflow on another port:
+
+```bash
+mlflow ui --backend-store-uri mlruns --port 5001
+```
+
+Then open `http://127.0.0.1:5001`.
+
 If MLflow is not installed in the local Python environment, run the UI from Docker instead:
 
 ```bash
