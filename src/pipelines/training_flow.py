@@ -218,9 +218,11 @@ def run_model_search(
             })
 
             logger.info(
-                "Training model %d/%d: %s",
+                "Training model %d/%d for feature_set=%s search_smote=%s: %s",
                 config_idx,
                 len(candidate_configs),
+                feature_set_name,
+                search_smote,
                 config["name"],
             )
 
@@ -506,6 +508,7 @@ def training(
         training_data_by_feature_set: dict[str, dict[str, Any]] = {}
 
         for feature_set in training_config.feature_set_names:
+            logger.info("Preparing feature set: %s", feature_set)
             cv_splits, selected_columns, X_train, _, _, y_train, _, _ = \
                 temporal_train_val_test_split(
                     df,
@@ -523,6 +526,11 @@ def training(
 
             for smote_enabled in training_config.search_smote_options:
                 smote_label = "with-smote" if smote_enabled else "without-smote"
+                logger.info(
+                    "Starting model search for feature_set=%s search_smote=%s",
+                    feature_set,
+                    smote_enabled,
+                )
                 with mlflow.start_run(
                     run_name=f"feature-set-{feature_set}-{smote_label}",
                     nested=True,
