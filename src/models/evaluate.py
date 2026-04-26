@@ -11,7 +11,9 @@ from sklearn.metrics import (
 from typing import Tuple
 import logging
 
+
 logger = logging.getLogger(__name__)
+
 
 def test_evaluation(
     model_name: str,

@@ -1,6 +1,7 @@
-from typing import Tuple, List
-import pandas as pd
 import logging
+import pandas as pd
+from typing import Tuple, List
+
 from ..features import (
     determine_columns
 )
@@ -11,6 +12,7 @@ from ..utils import (
     TIME_COLUMN,   
     DROP_COLUMNS  
 )
+
 
 logger = logging.getLogger(__name__)
 

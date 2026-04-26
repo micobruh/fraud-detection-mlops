@@ -1,12 +1,15 @@
+import logging
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
-import logging
+
 from ..utils import ID_COLUMN, setup_logging
+
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
 
 def load_csv(csv_file: str) -> pd.DataFrame:
     """Load a CSV file in chunks and return a concatenated DataFrame."""
@@ -19,6 +22,7 @@ def load_csv(csv_file: str) -> pd.DataFrame:
         raise FileNotFoundError(f"CSV File not found: {csv_path}")
     df = pd.concat(chunks) 
     return df
+
 
 def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
     for col in tqdm(df.columns):
@@ -37,6 +41,7 @@ def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = pd.to_numeric(df[col], downcast="float")
 
     return df
+
 
 def convert_to_parquet(init_relative_path: str, interim_relative_path: str) -> None:
     """Convert the raw CSV file to Parquet format for efficient storage and faster loading."""
@@ -60,6 +65,7 @@ def convert_to_parquet(init_relative_path: str, interim_relative_path: str) -> N
     interim_parquet = interim_relative_path + ".parquet"
     df.to_parquet(interim_parquet)
 
+
 def conversion() -> None:
     links = [f"data/{item}/ieee-fraud-detection/" for item in ["raw", "interim"]]
     convert_to_parquet(f"{links[0]}train", f"{links[1]}train")  
@@ -67,6 +73,7 @@ def conversion() -> None:
      
     convert_to_parquet(f"{links[0]}test", f"{links[1]}test")
     logger.info("Test data conversion from CSV to Parquet completed")
+
 
 if __name__ == "__main__":
     conversion()

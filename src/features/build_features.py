@@ -1,12 +1,19 @@
 from __future__ import annotations
+
+import logging
 from collections import defaultdict
 from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import OrdinalEncoder
-from ..utils import TIME_COLUMN, UID_COMBINE_COLUMNS, UID_COMBINED_COLUMN
-import logging
+
+from ..utils import (
+    TIME_COLUMN, 
+    UID_COMBINE_COLUMNS, 
+    UID_COMBINED_COLUMN
+)
+
 
 logger = logging.getLogger(__name__)
 

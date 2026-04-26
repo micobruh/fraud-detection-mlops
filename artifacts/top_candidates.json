@@ -148,7 +148,7 @@
     "V147",
     "V162"
   ],
-  "top_k": 2,
+  "top_k": 5,
   "candidates": [
     {
       "rank": 1,
@@ -192,6 +192,70 @@
         "model__n_estimators": 200,
         "model__max_depth": -1,
         "model__learning_rate": 0.03
+      },
+      "best_sampler": "passthrough"
+    },
+    {
+      "rank": 3,
+      "model_name": "balanced_random_forest",
+      "feature_set_name": "base_selected_v",
+      "search_smote": false,
+      "best_cv_score": 0.8947252437803525,
+      "best_cv_roc_auc": 0.8947252437803525,
+      "best_cv_average_precision": 0.5244189620835699,
+      "best_cv_f1": 0.38700883873881886,
+      "best_cv_accuracy": 0.916346520625012,
+      "best_cv_recall": 0.6620813950041414,
+      "best_cv_precision": 0.27375636738065917,
+      "num_cv_folds_used": 3,
+      "best_params": {
+        "sampler": "passthrough",
+        "model__n_estimators": 500,
+        "model__min_samples_split": 2,
+        "model__max_depth": 20
+      },
+      "best_sampler": "passthrough"
+    },
+    {
+      "rank": 4,
+      "model_name": "extra_trees",
+      "feature_set_name": "base_selected_v",
+      "search_smote": false,
+      "best_cv_score": 0.8904001715689489,
+      "best_cv_roc_auc": 0.8904001715689489,
+      "best_cv_average_precision": 0.5418285701560683,
+      "best_cv_f1": 0.43962463366080334,
+      "best_cv_accuracy": 0.9698133051096974,
+      "best_cv_recall": 0.29908706455445433,
+      "best_cv_precision": 0.8486136453695584,
+      "num_cv_folds_used": 3,
+      "best_params": {
+        "sampler": "passthrough",
+        "model__n_estimators": 500,
+        "model__min_samples_split": 10,
+        "model__max_features": 1.0,
+        "model__max_depth": null
+      },
+      "best_sampler": "passthrough"
+    },
+    {
+      "rank": 5,
+      "model_name": "random_forest",
+      "feature_set_name": "base_selected_v",
+      "search_smote": false,
+      "best_cv_score": 0.8886052767896165,
+      "best_cv_roc_auc": 0.8886052767896165,
+      "best_cv_average_precision": 0.5228012115541006,
+      "best_cv_f1": 0.39677234512360077,
+      "best_cv_accuracy": 0.9685263747366925,
+      "best_cv_recall": 0.2652283086589719,
+      "best_cv_precision": 0.847901708624044,
+      "num_cv_folds_used": 3,
+      "best_params": {
+        "sampler": "passthrough",
+        "model__n_estimators": 500,
+        "model__min_samples_split": 10,
+        "model__max_depth": null
       },
       "best_sampler": "passthrough"
     }

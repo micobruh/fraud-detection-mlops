@@ -5,9 +5,11 @@ from .baseline_flow import (
 )
 
 from .training_flow import (
-    build_feature_pipeline,
     run_model_search,
     training
+)
+from ..features import (
+    build_feature_pipeline,
 )
 
 __all__ = [

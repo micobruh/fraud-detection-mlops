@@ -7,9 +7,18 @@ from pathlib import Path
 from typing import List
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
-from ..utils import TARGET_COLUMN, BASE_COLUMNS, V_COLUMNS, FEATURE_SETS, DEFAULT_FEATURE_SET
+
+from ..utils import (
+    TARGET_COLUMN, 
+    BASE_COLUMNS, 
+    V_COLUMNS, 
+    FEATURE_SETS, 
+    DEFAULT_FEATURE_SET
+)
+
 
 logger = logging.getLogger(__name__)
+
 
 def remove_high_corr(
     df_main: pd.DataFrame,
@@ -143,6 +152,7 @@ def extract_relevant_V_columns(
         logger.info("Cached selected V columns to %s", cache_path)
 
     return less_correlated_V_columns
+
 
 def determine_columns(
     df_main: pd.DataFrame, 
