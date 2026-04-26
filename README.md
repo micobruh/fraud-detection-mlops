@@ -18,6 +18,42 @@ While some Kaggle solutions use stratified cross-validation, I adopted a time-aw
 
 7. Scheduled Retraining via Prefect
 
+# Local training with Docker
+
+Build the training image from the repository root:
+
+```bash
+docker build -t fraud-detection-training:local .
+```
+
+Run the training flow:
+
+```bash
+docker run --rm \
+  -v "$PWD/data:/app/data" \
+  -v "$PWD/mlruns:/app/mlruns" \
+  -v "$PWD/artifacts:/app/artifacts" \
+  fraud-detection-training:local
+```
+
+The Dockerfile default command is `python main.py`, so the command above starts the model training flow. The mounted directories provide the real local dataset and persist MLflow runs and generated artifacts after the container exits.
+
+To run the test suite inside the same image:
+
+```bash
+docker run --rm fraud-detection-training:local pytest
+```
+
+To inspect MLflow runs locally after training:
+
+```bash
+mlflow ui --backend-store-uri mlruns
+```
+
+Then open `http://127.0.0.1:5000`.
+
+Note: mounting `artifacts:/app/artifacts` allows training to update files in the local `artifacts/` directory.
+
 # Installing raw data from kaggle IEEE-CIS competition
 
 1. Install KaggleHub CLI: ```pip install kagglehub```
