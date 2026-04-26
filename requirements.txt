@@ -11,3 +11,4 @@ tqdm==4.67.1
 pyarrow==23.0.1
 mlflow==3.11.1
 pydantic==2.11.7
+pytest==8.3.5
