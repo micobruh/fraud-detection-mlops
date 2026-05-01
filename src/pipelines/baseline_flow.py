@@ -1,4 +1,6 @@
 import logging
+from time import perf_counter
+
 import mlflow
 import numpy as np
 import pandas as pd
@@ -17,7 +19,7 @@ from ..data import (
     temporal_train_val_test_split,
 )
 from ..models import (
-    test_evaluation,
+    compute_classification_metric,
 )
 from ..utils import (
     MLFLOW_TRAINING_EXPERIMENT_NAME,
@@ -27,6 +29,22 @@ from ..utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+BASELINE_MODEL_NAME = "baseline_predict_all_non_fraud"
+BASELINE_MODEL_LABEL = "Baseline Model"
+BASELINE_MODEL_ARTIFACT_PATH = "final_candidate_1"
+
+
+def _log_prefixed_metrics(prefix: str, metrics: dict[str, float]) -> None:
+    mlflow.log_metrics({
+        f"{prefix}_roc_auc": metrics["roc_auc"],
+        f"{prefix}_f1": metrics["f1"],
+        f"{prefix}_recall": metrics["recall"],
+        f"{prefix}_precision": metrics["precision"],
+        f"{prefix}_average_precision": metrics["average_precision"],
+        f"{prefix}_accuracy": metrics["accuracy"],
+    })
 
 
 def _baseline_metrics(y_true: pd.Series | np.ndarray):
@@ -56,7 +74,10 @@ def baseline_training(data_dir: str) -> None:
 
     with mlflow.start_run(run_name="baseline-offline-training"):
         mlflow.log_params({
-            "model_name": "baseline_predict_all_non_fraud",
+            "final_candidate_1_model_name": BASELINE_MODEL_NAME,
+            "final_candidate_1_feature_set_name": "baseline",
+            "final_candidate_1_search_smote": False,
+            "final_candidate_1_best_sampler": "passthrough",
             "baseline_strategy": "constant_zero",
         })
 
@@ -104,50 +125,84 @@ def baseline_training(data_dir: str) -> None:
         }
         log_cv_metrics(logger, "Baseline Model", averaged_metrics)
 
-        mlflow.log_metrics({
-            "best_cv_roc_auc": averaged_metrics["roc_auc"],
-            "best_cv_average_precision": averaged_metrics["average_precision"],
-            "best_cv_f1": averaged_metrics["f1"],
-            "best_cv_accuracy": averaged_metrics["accuracy"],
-            "best_cv_recall": averaged_metrics["recall"],
-            "best_cv_precision": averaged_metrics["precision"],
-        })
+        _log_prefixed_metrics("best_cv", averaged_metrics)
 
         baseline_model = DummyClassifier(strategy="constant", constant=0)
+        fit_start_time = perf_counter()
         baseline_model.fit(X_train, y_train)
+        fit_elapsed_seconds = perf_counter() - fit_start_time
+
+        mlflow.log_metrics({
+            "final_candidate_1_fit_elapsed_seconds": fit_elapsed_seconds,
+            "final_candidate_1_predict_elapsed_seconds": 0.0,
+        })
         mlflow.sklearn.log_model(
             baseline_model,
-            artifact_path="baseline_model",
+            artifact_path=BASELINE_MODEL_ARTIFACT_PATH,
         )
 
 
-def baseline_streaming_validation(data_dir: str) -> None:
+def baseline_validation(data_dir: str) -> None:
     mlflow.set_experiment(MLFLOW_VALIDATION_EXPERIMENT_NAME)
-    df = load_interim_data(data_dir)
-    _, _, _, _, _, _, y_stream_val, _ = temporal_train_val_test_split(df)
+    with mlflow.start_run(run_name="baseline-streaming-validation"):
+        mlflow.log_params({
+            "candidate_1_model_name": BASELINE_MODEL_NAME,
+            "candidate_1_feature_set_name": "baseline",
+            "candidate_1_validation_mode": "streaming",
+            "candidate_1_streaming_batch_size": "1",
+            "baseline_strategy": "constant_zero",
+        })
 
-    y_stream_val_score = np.zeros(len(y_stream_val), dtype=float)
-    y_stream_val_pred = np.zeros(len(y_stream_val), dtype=int)
-    test_evaluation(
-        "Baseline Model",
-        "Streaming Validation",
-        y_stream_val,
-        y_stream_val_score,
-        y_stream_val_pred,
-    )
+        df = load_interim_data(data_dir)
+        _, _, _, _, _, _, y_stream_val, _ = temporal_train_val_test_split(df)
+
+        predict_start_time = perf_counter()
+        y_stream_val_score = np.zeros(len(y_stream_val), dtype=float)
+        y_stream_val_pred = np.zeros(len(y_stream_val), dtype=int)
+        predict_elapsed_seconds = perf_counter() - predict_start_time
+
+        metrics = compute_classification_metric(
+            BASELINE_MODEL_LABEL,
+            "Validation",
+            y_stream_val,
+            y_stream_val_score,
+            y_stream_val_pred,
+        )
+        _log_prefixed_metrics("candidate_1_validation", metrics)
+        mlflow.log_metrics({
+            "candidate_1_fit_elapsed_seconds": 0.0,
+            "candidate_1_predict_elapsed_seconds": predict_elapsed_seconds,
+        })
 
 
-def baseline_streaming_test(data_dir: str) -> None:
+def baseline_test(data_dir: str) -> None:
     mlflow.set_experiment(MLFLOW_TEST_EXPERIMENT_NAME)    
-    df = load_interim_data(data_dir)
-    _, _, _, _, _, _, _, y_stream_test = temporal_train_val_test_split(df)
+    with mlflow.start_run(run_name="baseline-streaming-test"):
+        mlflow.log_params({
+            "candidate_1_model_name": BASELINE_MODEL_NAME,
+            "candidate_1_feature_set_name": "baseline",
+            "candidate_1_validation_mode": "streaming_test",
+            "candidate_1_streaming_batch_size": "1",
+            "baseline_strategy": "constant_zero",
+        })
 
-    y_stream_test_score = np.zeros(len(y_stream_test), dtype=float)
-    y_stream_test_pred = np.zeros(len(y_stream_test), dtype=int)
-    test_evaluation(
-        "Baseline Model",
-        "Streaming Test",
-        y_stream_test,
-        y_stream_test_score,
-        y_stream_test_pred,
-    )
+        df = load_interim_data(data_dir)
+        _, _, _, _, _, _, _, y_stream_test = temporal_train_val_test_split(df)
+
+        predict_start_time = perf_counter()
+        y_stream_test_score = np.zeros(len(y_stream_test), dtype=float)
+        y_stream_test_pred = np.zeros(len(y_stream_test), dtype=int)
+        predict_elapsed_seconds = perf_counter() - predict_start_time
+
+        metrics = compute_classification_metric(
+            BASELINE_MODEL_LABEL,
+            "Test",
+            y_stream_test,
+            y_stream_test_score,
+            y_stream_test_pred,
+        )
+        _log_prefixed_metrics("candidate_1_test", metrics)
+        mlflow.log_metrics({
+            "candidate_1_fit_elapsed_seconds": 0.0,
+            "candidate_1_predict_elapsed_seconds": predict_elapsed_seconds,
+        })

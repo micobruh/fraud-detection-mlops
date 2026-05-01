@@ -13,7 +13,7 @@ from ..data import (
     temporal_train_val_test_split
 )
 from ..models import (
-    get_candidate_configs
+    get_candidate_configs,
 )
 from ..utils import (
     RANDOM_STATE, 
@@ -44,7 +44,6 @@ class TrainingConfig(BaseModel):
     search_smote_options: list[bool] = Field(default_factory=lambda: [False, True])
     use_successive_halving: bool = False
     search_n_jobs: int = Field(default=1, ge=1)
-    save_incremental: bool = True
     v_columns_cache_path: str | Path | None = "artifacts/selected_v_columns.json"
 
 
@@ -149,10 +148,11 @@ def run_model_search(
     search_smote: bool = DEFAULT_SEARCH_SMOTE,
     use_successive_halving: bool = False,
     search_n_jobs: int = DEFAULT_SEARCH_N_JOBS,
-    save_incremental: bool = True,
     incremental_save_path: str = "artifacts/model_comparison_incremental.csv",
+    existing_results: list[dict[str, Any]] | None = None,
 ):
     all_results = []
+    existing_results = existing_results or []
     valid_cv_splits = filter_valid_cv_splits(cv_splits, y_train)
 
     candidate_configs = get_candidate_configs(
@@ -164,10 +164,6 @@ def run_model_search(
         logger.warning(
             "use_successive_halving=True is ignored because multi-metric CV requires RandomizedSearchCV."
         )
-    
-    # Initialize incremental save file
-    if save_incremental:
-        Path(incremental_save_path).parent.mkdir(parents=True, exist_ok=True)
 
     mlflow.sklearn.autolog(log_models=False)
     for config_idx, config in enumerate(candidate_configs, start=1):
@@ -238,14 +234,13 @@ def run_model_search(
             )
             all_results.append(result.model_dump())
 
-            if save_incremental:
-                incremental_results_df = (
-                    pd.DataFrame(all_results)
-                    .sort_values("best_cv_score", ascending=False)
-                    .reset_index(drop=True)
-                )
-                incremental_results_df.insert(0, "rank", incremental_results_df.index + 1)
-                save_model_comparison(incremental_results_df, incremental_save_path)
+            incremental_results_df = (
+                pd.DataFrame(existing_results + all_results)
+                .sort_values("best_cv_score", ascending=False)
+                .reset_index(drop=True)
+            )
+            incremental_results_df.insert(0, "rank", incremental_results_df.index + 1)
+            save_model_comparison(incremental_results_df, incremental_save_path)
 
             n_iter = config.get("n_iter", 20)
             n_cv_folds = len(valid_cv_splits)
@@ -298,8 +293,6 @@ def training(
     search_smote_options: list[bool] | None = None,
     use_successive_halving: bool = False,
     search_n_jobs: int = DEFAULT_SEARCH_N_JOBS,
-    shortlist_roc_auc_tolerance: float = 0.005,
-    save_incremental: bool = True,
     v_columns_cache_path: str | None = "artifacts/selected_v_columns.json",
 ) -> None:
     requested_feature_set_names = feature_set_names
@@ -320,7 +313,6 @@ def training(
         search_smote_options=resolved_search_smote_options,
         use_successive_halving=use_successive_halving,
         search_n_jobs=search_n_jobs,
-        save_incremental=save_incremental,
         v_columns_cache_path=v_columns_cache_path,
     )   
 
@@ -339,8 +331,6 @@ def training(
 
         df = load_interim_data(training_config.data_dir)
         all_results = []
-        training_data_by_feature_set: dict[str, dict[str, Any]] = {}
-
         for feature_set in training_config.feature_set_names:
             logger.info("Preparing feature set: %s", feature_set)
             cv_splits, selected_columns, X_train, _, _, y_train, _, _ = \
@@ -350,13 +340,6 @@ def training(
                     training_config.threshold,
                     training_config.v_columns_cache_path,
                 )
-
-            training_data_by_feature_set[feature_set] = {
-                "cv_splits": cv_splits,
-                "selected_columns": selected_columns,
-                "X_train": X_train,
-                "y_train": y_train,
-            }
 
             for smote_enabled in training_config.search_smote_options:
                 smote_label = "with-smote" if smote_enabled else "without-smote"
@@ -389,18 +372,17 @@ def training(
                         search_smote=smote_enabled,
                         use_successive_halving=training_config.use_successive_halving,
                         search_n_jobs=training_config.search_n_jobs,
-                        save_incremental=False,
+                        existing_results=all_results,
                     )
                     all_results.extend(results_df.drop(columns=["rank"]).to_dict(orient="records"))
 
-                    if save_incremental:
-                        incremental_results_df = (
-                            pd.DataFrame(all_results)
-                            .sort_values("best_cv_score", ascending=False)
-                            .reset_index(drop=True)
-                        )
-                        incremental_results_df.insert(0, "rank", incremental_results_df.index + 1)
-                        save_model_comparison(
-                            incremental_results_df,
-                            "artifacts/model_comparison_incremental.csv",
-                        )
+                    incremental_results_df = (
+                        pd.DataFrame(all_results)
+                        .sort_values("best_cv_score", ascending=False)
+                        .reset_index(drop=True)
+                    )
+                    incremental_results_df.insert(0, "rank", incremental_results_df.index + 1)
+                    save_model_comparison(
+                        incremental_results_df,
+                        "artifacts/model_comparison_incremental.csv",
+                    )

@@ -681,6 +681,83 @@ class UIDAggregationAppendTransformer(BaseEstimator, TransformerMixin):
         X_out = X.copy()
         X_out[aggregated.columns] = aggregated
         return X_out
+    
+    def transform_stream(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Append UID aggregate features using the current historical state only.
+
+        This does not update state, so the current batch cannot leak into its own
+        predictions.
+        """
+        self._check_is_fitted()
+
+        if not hasattr(self, "stream_state_"):
+            self._initialize_stream_state()
+
+        temp = self._prepare_working_frame(X)
+        out = X.copy()
+
+        for main_col in self.main_columns:
+            for uid_col in self.uid_columns:
+                uid_values = temp[uid_col]
+
+                for agg in self.aggregations:
+                    feature_name = f"{main_col}_{uid_col}_{agg}"
+                    state = self.stream_state_[(main_col, uid_col)]
+                    fallback = self.uid_aggregation_transformer_.global_fallbacks_[
+                        (main_col, uid_col, agg)
+                    ]
+
+                    encoded = uid_values.map(
+                        lambda uid: self._compute_stream_aggregate(state.get(uid), agg, fallback)
+                    )
+                    out[feature_name] = encoded.fillna(self.fill_value).astype(self.dtype)
+
+        return out
+
+
+    def partial_fit_stream(self, X: pd.DataFrame) -> "UIDAggregationAppendTransformer":
+        """
+        Update UID aggregate state after prediction.
+
+        Call this only after transform_stream/predict has already run for X.
+        """
+        self._check_is_fitted()
+
+        if not hasattr(self, "stream_state_"):
+            self._initialize_stream_state()
+
+        temp = self._prepare_working_frame(X)
+
+        for main_col in self.main_columns:
+            values = temp[main_col]
+
+            for uid_col in self.uid_columns:
+                state = self.stream_state_[(main_col, uid_col)]
+
+                for uid, value in zip(temp[uid_col], values):
+                    if pd.isna(value):
+                        continue
+
+                    value = float(value)
+                    uid_state = state.setdefault(
+                        uid,
+                        {
+                            "count": 0,
+                            "sum": 0.0,
+                            "sum_sq": 0.0,
+                            "min": value,
+                            "max": value,
+                        },
+                    )
+
+                    uid_state["count"] += 1
+                    uid_state["sum"] += value
+                    uid_state["sum_sq"] += value * value
+                    uid_state["min"] = min(uid_state["min"], value)
+                    uid_state["max"] = max(uid_state["max"], value)
+
+        return self
 
     def get_feature_names_out(self, input_features=None):
         self._check_is_fitted()
@@ -709,6 +786,93 @@ class UIDAggregationAppendTransformer(BaseEstimator, TransformerMixin):
     def _check_is_fitted(self) -> None:
         if not hasattr(self, "uid_aggregation_transformer_"):
             raise ValueError("UIDAggregationAppendTransformer is not fitted yet. Call fit() first.")
+        
+    def _initialize_stream_state(self) -> None:
+        """
+        Initialize online aggregate state from the fitted training mappings.
+        """
+        temp_state = {}
+
+        for main_col in self.main_columns:
+            for uid_col in self.uid_columns:
+                state = {}
+
+                count_mapping = self.uid_aggregation_transformer_.mapping_dicts_.get(
+                    (main_col, uid_col, "count"),
+                    {},
+                )
+                mean_mapping = self.uid_aggregation_transformer_.mapping_dicts_.get(
+                    (main_col, uid_col, "mean"),
+                    {},
+                )
+                std_mapping = self.uid_aggregation_transformer_.mapping_dicts_.get(
+                    (main_col, uid_col, "std"),
+                    {},
+                )
+                min_mapping = self.uid_aggregation_transformer_.mapping_dicts_.get(
+                    (main_col, uid_col, "min"),
+                    {},
+                )
+                max_mapping = self.uid_aggregation_transformer_.mapping_dicts_.get(
+                    (main_col, uid_col, "max"),
+                    {},
+                )
+
+                for uid, count in count_mapping.items():
+                    count = int(count)
+                    mean = float(mean_mapping.get(uid, 0.0))
+                    std = float(std_mapping.get(uid, 0.0))
+
+                    if count <= 0:
+                        continue
+
+                    # Approximate sum/sum_sq from fitted count/mean/std.
+                    total = mean * count
+                    if count > 1 and not pd.isna(std):
+                        sum_sq = (std * std) * (count - 1) + (total * total / count)
+                    else:
+                        sum_sq = total * total / count
+
+                    state[uid] = {
+                        "count": count,
+                        "sum": total,
+                        "sum_sq": sum_sq,
+                        "min": float(min_mapping.get(uid, mean)),
+                        "max": float(max_mapping.get(uid, mean)),
+                    }
+
+                temp_state[(main_col, uid_col)] = state
+
+        self.stream_state_ = temp_state
+
+
+    def _compute_stream_aggregate(
+        self,
+        state: dict[str, float] | None,
+        agg: str,
+        fallback: float,
+    ) -> float:
+        if state is None or state["count"] <= 0:
+            return float(fallback)
+
+        count = state["count"]
+
+        if agg == "count":
+            return float(count)
+        if agg == "mean":
+            return float(state["sum"] / count)
+        if agg == "std":
+            if count <= 1:
+                return float(self.fill_value)
+            variance = (state["sum_sq"] - (state["sum"] * state["sum"] / count)) / (count - 1)
+            return float(np.sqrt(max(variance, 0.0)))
+        if agg == "min":
+            return float(state["min"])
+        if agg == "max":
+            return float(state["max"])
+
+        raise ValueError(f"Unsupported streaming aggregation: {agg}")
+
     
 
 class DropColumnsTransformer(BaseEstimator, TransformerMixin):
