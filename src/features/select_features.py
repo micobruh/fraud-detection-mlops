@@ -114,6 +114,7 @@ def _write_cached_v_columns(
         "columns": selected_columns,
     }, indent=2))
 
+
 def extract_relevant_V_columns(
     df_main: pd.DataFrame,
     threshold: float = 0.65,

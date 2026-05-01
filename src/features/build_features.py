@@ -498,7 +498,7 @@ class UIDAggregationTransformer(BaseEstimator, TransformerMixin):
     ) -> None:
         self.main_columns = main_columns
         self.uid_columns = uid_columns
-        self.aggregations = list(aggregations)
+        self.aggregations = aggregations
         self.fill_value = fill_value
         self.use_na_sentinel = use_na_sentinel
         self.na_sentinel = na_sentinel
@@ -655,7 +655,7 @@ class UIDAggregationAppendTransformer(BaseEstimator, TransformerMixin):
     ) -> None:
         self.main_columns = main_columns
         self.uid_columns = uid_columns
-        self.aggregations = list(aggregations)
+        self.aggregations = aggregations
         self.combined_uid_columns = combined_uid_columns if combined_uid_columns is not None else list(UID_COMBINE_COLUMNS)
         self.combined_uid_name = combined_uid_name
         self.fill_value = fill_value

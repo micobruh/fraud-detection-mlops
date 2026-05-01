@@ -7,7 +7,9 @@ TIME_COLUMN = "TransactionDT"
 DEFAULT_FEATURE_SET = "base_selected_v"
 DEFAULT_SEARCH_SMOTE = True
 DEFAULT_SEARCH_N_JOBS = 1
-MLFLOW_EXPERIMENT_NAME = "fraud-detection-training"
+MLFLOW_TRAINING_EXPERIMENT_NAME = "fraud-detection-training"
+MLFLOW_VALIDATION_EXPERIMENT_NAME = "fraud-detection-validation"
+MLFLOW_TEST_EXPERIMENT_NAME = "fraud-detection-test"
 
 BASE_COLUMNS = [
     "TransactionAmt", "ProductCD",

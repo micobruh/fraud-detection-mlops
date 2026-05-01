@@ -1,10 +1,9 @@
 import logging
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from tqdm import tqdm
 
-from ..utils import ID_COLUMN, setup_logging
+from ..utils import ID_COLUMN, resolve_project_path, setup_logging
 
 
 setup_logging()
@@ -13,10 +12,9 @@ logger = logging.getLogger(__name__)
 
 def load_csv(csv_file: str) -> pd.DataFrame:
     """Load a CSV file in chunks and return a concatenated DataFrame."""
-    root_path = Path(__file__).resolve().parents[2]
-    csv_path = root_path / Path(csv_file)
+    csv_path = resolve_project_path(csv_file)
     try:
-        chunks = pd.read_csv(str(csv_path), index_col=ID_COLUMN, chunksize=100000)
+        chunks = pd.read_csv(csv_path, index_col=ID_COLUMN, chunksize=100000)
     except Exception:
         logger.exception(f"CSV File not found: {csv_path}")
         raise FileNotFoundError(f"CSV File not found: {csv_path}")
@@ -62,7 +60,8 @@ def convert_to_parquet(init_relative_path: str, interim_relative_path: str) -> N
     df = reduce_memory_usage(df)
     logger.debug("Data types changed for memory efficiency")
 
-    interim_parquet = interim_relative_path + ".parquet"
+    interim_parquet = resolve_project_path(interim_relative_path + ".parquet")
+    interim_parquet.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(interim_parquet)
 
 

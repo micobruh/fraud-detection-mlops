@@ -7,7 +7,9 @@ from .config import (
     DEFAULT_FEATURE_SET,
     DEFAULT_SEARCH_SMOTE,
     DEFAULT_SEARCH_N_JOBS,
-    MLFLOW_EXPERIMENT_NAME,
+    MLFLOW_TRAINING_EXPERIMENT_NAME,    
+    MLFLOW_VALIDATION_EXPERIMENT_NAME,
+    MLFLOW_TEST_EXPERIMENT_NAME,
     BASE_COLUMNS,
     V_COLUMNS,
     CATEGORICAL_COLUMNS,
@@ -22,7 +24,12 @@ from .config import (
 )
 
 from .logger import (
-    setup_logging
+    setup_logging,
+    log_cv_metrics,
+)
+from .paths import (
+    ROOT_DIR,
+    resolve_project_path,
 )
 
 __all__ = [
@@ -34,7 +41,9 @@ __all__ = [
     "DEFAULT_FEATURE_SET",
     "DEFAULT_SEARCH_SMOTE",
     "DEFAULT_SEARCH_N_JOBS",
-    "MLFLOW_EXPERIMENT_NAME",
+    "MLFLOW_TRAINING_EXPERIMENT_NAME",
+    "MLFLOW_VALIDATION_EXPERIMENT_NAME",    
+    "MLFLOW_TEST_EXPERIMENT_NAME",
     "BASE_COLUMNS",    
     "V_COLUMNS",
     "CATEGORICAL_COLUMNS",
@@ -47,4 +56,7 @@ __all__ = [
     "UID_AGGREGATION_UID_COLUMNS",
     "UID_AGGREGATION_FUNCTIONS",
     "setup_logging",
+    "log_cv_metrics",
+    "ROOT_DIR",
+    "resolve_project_path",
 ]

@@ -20,9 +20,9 @@ from ..models import (
     test_evaluation,
 )
 from ..utils import (
-    MLFLOW_EXPERIMENT_NAME,
-)
-from .cv_logging import (
+    MLFLOW_TRAINING_EXPERIMENT_NAME,
+    MLFLOW_VALIDATION_EXPERIMENT_NAME,
+    MLFLOW_TEST_EXPERIMENT_NAME,
     log_cv_metrics,
 )
 
@@ -52,7 +52,7 @@ def _baseline_metrics(y_true: pd.Series | np.ndarray):
 
 
 def baseline_training(data_dir: str) -> None:
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    mlflow.set_experiment(MLFLOW_TRAINING_EXPERIMENT_NAME)
 
     with mlflow.start_run(run_name="baseline-offline-training"):
         mlflow.log_params({
@@ -122,6 +122,7 @@ def baseline_training(data_dir: str) -> None:
 
 
 def baseline_streaming_validation(data_dir: str) -> None:
+    mlflow.set_experiment(MLFLOW_VALIDATION_EXPERIMENT_NAME)
     df = load_interim_data(data_dir)
     _, _, _, _, _, _, y_stream_val, _ = temporal_train_val_test_split(df)
 
@@ -137,6 +138,7 @@ def baseline_streaming_validation(data_dir: str) -> None:
 
 
 def baseline_streaming_test(data_dir: str) -> None:
+    mlflow.set_experiment(MLFLOW_TEST_EXPERIMENT_NAME)    
     df = load_interim_data(data_dir)
     _, _, _, _, _, _, _, y_stream_test = temporal_train_val_test_split(df)
 
