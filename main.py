@@ -9,7 +9,8 @@ from src.pipelines import (
     training,
     validation,
     select_threshold_for_validated_candidate,
-    test
+    test,
+    predict_champion_test,
 )
 from src.utils import (
     MLFLOW_TRAINING_EXPERIMENT_NAME,
@@ -27,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "stage",
         nargs="?",
-        choices=["all", "training", "validation", "threshold", "test"],
+        choices=["all", "training", "validation", "threshold", "test", "predict"],
         default="all",
         help="Pipeline stage to run. Defaults to all.",
     )
@@ -36,6 +37,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional path to the interim IEEE fraud detection data directory.",
+    )
+    parser.add_argument(
+        "--input-path",
+        type=Path,
+        default=None,
+        help="Optional parquet or CSV file to score with the registered champion model.",
     )
     return parser.parse_args()
 
@@ -95,6 +102,21 @@ def run_threshold_selection(data_dir: str | Path | None = None) -> None:
     )
 
 
+def run_champion_prediction(
+    data_dir: str | Path | None = None,
+    input_path: str | Path | None = None,
+) -> None:
+    setup_logging()
+
+    interim_data_dir = data_dir or get_interim_data_dir()
+    prediction_result = predict_champion_test(interim_data_dir, input_path=input_path)
+    logger.info(
+        "Champion prediction complete. predictions=%s production_predictions=%s",
+        prediction_result["prediction_path"],
+        prediction_result["production_prediction_path"],
+    )
+
+
 def main() -> None:
     setup_logging()
 
@@ -128,6 +150,14 @@ def main() -> None:
         baseline_test(interim_data_dir)
         test(interim_data_dir)
         logger.info("Test complete. MLflow runs are available in experiment '%s'.", MLFLOW_TEST_EXPERIMENT_NAME)
+
+    if args.stage == "predict":
+        prediction_result = predict_champion_test(interim_data_dir, input_path=args.input_path)
+        logger.info(
+            "Champion prediction complete. predictions=%s production_predictions=%s",
+            prediction_result["prediction_path"],
+            prediction_result["production_prediction_path"],
+        )
 
 
 

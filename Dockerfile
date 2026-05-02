@@ -29,4 +29,4 @@ COPY --chown=app:app tests ./tests
 
 USER app
 
-CMD ["python", "main.py", "test"]
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

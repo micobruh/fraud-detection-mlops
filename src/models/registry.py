@@ -171,6 +171,12 @@ def write_champion_metadata(
     return path
 
 
+def optional_float(value: Any) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
 def promote_champion(
     registered_model_name: str = DEFAULT_REGISTERED_MODEL_NAME,
     alias: str = DEFAULT_ALIAS,
@@ -187,6 +193,16 @@ def promote_champion(
     run_id = find_latest_test_run(client, experiment_id)
     logged_model = find_logged_model_for_run(client, experiment_id, run_id)
     model_source = localize_file_uri(logged_model.artifact_location)
+    classification_threshold = optional_float(final_result.get("classification_threshold"))
+    version_tags = {
+        "model_name": str(final_result["model_name"]),
+        "feature_set_name": str(final_result["feature_set_name"]),
+        "training_data_scope": str(final_result["training_data_scope"]),
+        "test_mode": str(final_result["test_mode"]),
+        "feature_state_policy": str(final_result.get("selected_feature_state_policy", "not_applicable")),
+    }
+    if classification_threshold is not None:
+        version_tags["classification_threshold"] = str(classification_threshold)
 
     version = register_model_version(
         client=client,
@@ -194,12 +210,7 @@ def promote_champion(
         source=model_source,
         run_id=run_id,
         logged_model_id=logged_model.model_id,
-        tags={
-            "model_name": str(final_result["model_name"]),
-            "feature_set_name": str(final_result["feature_set_name"]),
-            "training_data_scope": str(final_result["training_data_scope"]),
-            "test_mode": str(final_result["test_mode"]),
-        },
+        tags=version_tags,
     )
     client.set_registered_model_alias(registered_model_name, alias, version.version)
 
@@ -218,12 +229,14 @@ def promote_champion(
         "model_name": final_result["model_name"],
         "feature_set_name": final_result["feature_set_name"],
         "training_data_scope": final_result["training_data_scope"],
+        "feature_state_policy": final_result.get("selected_feature_state_policy", "not_applicable"),
         "test_mode": final_result["test_mode"],
         "streaming_batch_size": (
             None
             if pd.isna(final_result.get("streaming_batch_size"))
             else int(final_result["streaming_batch_size"])
         ),
+        "classification_threshold": classification_threshold,
         "test_metrics": {
             "roc_auc": float(final_result["roc_auc"]),
             "average_precision": float(final_result["average_precision"]),

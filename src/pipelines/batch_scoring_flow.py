@@ -14,23 +14,35 @@ from ..data import (
     load_interim_data,
     temporal_train_val_test_split
 )
+from ..features import (
+    determine_columns
+)
 from ..models import (
     build_pipeline_from_config,
     streaming_predict_scores,
     offline_predict_scores,
     sort_y_labels,
+    predict_labels_at_threshold,
     compute_classification_metric,
     select_threshold_by_f1,
+    load_champion_metadata,
+    load_model_from_mlflow,    
 )
 from ..utils import (
     FEATURE_SETS,
+    ID_COLUMN,
     MLFLOW_VALIDATION_EXPERIMENT_NAME,
     MLFLOW_TEST_EXPERIMENT_NAME,
+    TIME_COLUMN,
     resolve_project_path,
+    DROP_COLUMNS
 )
 
 
 logger = logging.getLogger(__name__)
+
+
+DEFAULT_V_SELECTION_THRESHOLD = 0.65
 
 
 VALIDATION_RESULT_COLUMNS = [
@@ -121,6 +133,15 @@ class TestConfig(BaseModel):
         if value is not None and value < 1:
             raise ValueError("streaming_batch_size must be None or >= 1")
         return value       
+
+
+class ChampionPredictionConfig(BaseModel):
+    data_dir: str | Path
+    input_path: str | Path | None = None
+    metadata_path: str | Path = "artifacts/champion_model.json"
+    prediction_path: str | Path = "artifacts/champion_test_predictions.csv"
+    production_prediction_path: str | Path = "artifacts/champion_test_predictions_production.csv"
+    v_columns_cache_path: str | Path | None = "artifacts/selected_v_columns.json"
 
 
 class CandidateRow(BaseModel):
@@ -364,10 +385,6 @@ def validation_feature_state_policies(
 
 def stream_update_for_policy(feature_state_policy: str) -> bool:
     return feature_state_policy == "updated_after_prediction"
-
-
-def predict_labels_at_threshold(y_scores: Any, threshold: float) -> Any:
-    return (pd.Series(y_scores) >= threshold).astype(int).to_numpy()
 
 
 def safe_mlflow_key_part(value: str) -> str:
@@ -644,6 +661,193 @@ def save_test_results(
     results_df.to_csv(output_file, index=False)
 
 
+def resolve_prediction_input_path(input_path: str | Path) -> Path:
+    path = resolve_project_path(input_path)
+    if path.is_dir():
+        test_file = path / "test.parquet"
+        if test_file.exists():
+            return test_file
+        train_file = path / "train.parquet"
+        if train_file.exists():
+            return train_file
+        raise FileNotFoundError(f"No test.parquet or train.parquet found in {path}.")
+
+    if path.exists():
+        return path
+
+    if path.suffix == "":
+        parquet_path = path.with_suffix(".parquet")
+        if parquet_path.exists():
+            return parquet_path
+
+    raise FileNotFoundError(f"Prediction input file not found: {path}")
+
+
+def load_prediction_input_data(input_path: str | Path) -> pd.DataFrame:
+    path = resolve_prediction_input_path(input_path)
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
+    if path.suffix == ".csv":
+        return pd.read_csv(path)
+    raise ValueError(f"Unsupported prediction input format: {path.suffix}. Use .parquet or .csv.")
+
+
+def prediction_ids_from_frame(df: pd.DataFrame) -> Any:
+    if ID_COLUMN in df.columns:
+        return df[ID_COLUMN].to_numpy()
+    if df.index.name == ID_COLUMN:
+        return df.index.to_numpy()
+    return df.index.to_numpy()
+
+
+def save_test_prediction_outputs(
+    X_test: pd.DataFrame,
+    y_scores: Any,
+    y_preds: Any,
+    metadata: dict[str, Any],
+    submission_path: str | Path = "artifacts/champion_test_predictions.csv",
+    production_path: str | Path = "artifacts/champion_test_predictions_production.csv",
+) -> tuple[Path, Path]:
+    submission_file = resolve_project_path(submission_path)
+    production_file = resolve_project_path(production_path)
+    submission_file.parent.mkdir(parents=True, exist_ok=True)
+    production_file.parent.mkdir(parents=True, exist_ok=True)
+
+    prediction_ids = prediction_ids_from_frame(X_test)
+    labels = pd.Series(y_preds).astype(int).to_numpy()
+    scores = pd.Series(y_scores).astype(float).to_numpy()
+
+    submission_df = pd.DataFrame(
+        {
+            ID_COLUMN: prediction_ids,
+            "isFraud": labels,
+        }
+    )
+    submission_df.to_csv(submission_file, index=False)
+
+    production_df = pd.DataFrame(
+        {
+            ID_COLUMN: prediction_ids,
+            "fraud_score": scores,
+            "isFraud": labels,
+            "classification_threshold": champion_classification_threshold(metadata),
+            "model_uri": metadata["model_uri"],
+            "registered_model_name": metadata["registered_model_name"],
+            "registered_model_version": metadata["registered_model_version"],
+            "model_name": metadata["model_name"],
+            "feature_set_name": metadata["feature_set_name"],
+            "training_data_scope": metadata["training_data_scope"],
+            "prediction_mode": metadata["test_mode"],
+            "streaming_batch_size": metadata["streaming_batch_size"],
+            "feature_state_policy": metadata.get("feature_state_policy", "not_applicable"),
+        }
+    )
+    production_df.to_csv(production_file, index=False)
+    return submission_file, production_file
+
+
+def champion_classification_threshold(metadata: dict[str, Any]) -> float:
+    threshold = metadata.get("classification_threshold")
+    if threshold is None or pd.isna(threshold):
+        return 0.5
+    return float(threshold)
+
+
+def champion_v_selection_threshold(metadata: dict[str, Any]) -> float:
+    threshold = metadata.get("v_selection_threshold", metadata.get("threshold"))
+    if threshold is None or pd.isna(threshold):
+        return DEFAULT_V_SELECTION_THRESHOLD
+    return float(threshold)
+
+
+def score_champion_predictions(
+    pipeline: Any,
+    X_test: pd.DataFrame,
+    metadata: dict[str, Any],
+) -> tuple[pd.DataFrame, Any, Any]:
+    threshold = champion_classification_threshold(metadata)
+    streaming_batch_size = metadata.get("streaming_batch_size")
+    feature_state_policy = metadata.get("feature_state_policy", "not_applicable")
+
+    if streaming_batch_size is None:
+        y_scores, y_preds = offline_predict_scores(
+            pipeline,
+            X_test,
+            threshold=threshold,
+        )
+        return X_test, y_scores, y_preds
+
+    X_test_sorted = X_test.sort_values(TIME_COLUMN)
+    y_scores, y_preds = streaming_predict_scores(
+        pipeline,
+        X_test_sorted,
+        batch_size=int(streaming_batch_size),
+        stream_update=stream_update_for_policy(feature_state_policy),
+        threshold=threshold,
+    )
+    return X_test_sorted, y_scores, y_preds
+
+
+def predict_champion_test(
+    data_dir: str,
+    input_path: str | Path | None = None,
+    metadata_path: str | Path = "artifacts/champion_model.json",
+    prediction_path: str | Path = "artifacts/champion_test_predictions.csv",
+    production_prediction_path: str | Path = "artifacts/champion_test_predictions_production.csv",
+    v_columns_cache_path: str | None = "artifacts/selected_v_columns.json",
+) -> dict[str, Any]:
+    prediction_config = ChampionPredictionConfig(
+        data_dir=data_dir,
+        input_path=input_path,
+        metadata_path=metadata_path,
+        prediction_path=prediction_path,
+        production_prediction_path=production_prediction_path,
+        v_columns_cache_path=v_columns_cache_path,
+    )
+    metadata = load_champion_metadata(prediction_config.metadata_path)
+    champion_model = load_model_from_mlflow(metadata_path=prediction_config.metadata_path)
+
+    if prediction_config.input_path is None:
+        df = load_interim_data(prediction_config.data_dir)
+        _, _, _, _, X_test, _, _, _ = temporal_train_val_test_split(
+            df,
+            metadata["feature_set_name"],
+            v_columns_cache_path=prediction_config.v_columns_cache_path,
+        )
+    else:
+        df = load_prediction_input_data(prediction_config.input_path)
+        columns = determine_columns(
+            df,
+            metadata["feature_set_name"],
+            champion_v_selection_threshold(metadata),
+            prediction_config.v_columns_cache_path,
+        )
+        available_drop_columns = [col for col in DROP_COLUMNS if col in df.columns]
+        model_input_columns = list(dict.fromkeys(columns + available_drop_columns))
+        X_test = df[model_input_columns]
+
+    X_test_for_predictions, y_scores, y_preds = score_champion_predictions(
+        champion_model,
+        X_test,
+        metadata,
+    )
+    prediction_file, production_file = save_test_prediction_outputs(
+        X_test=X_test_for_predictions,
+        y_scores=y_scores,
+        y_preds=y_preds,
+        metadata=metadata,
+        submission_path=prediction_config.prediction_path,
+        production_path=prediction_config.production_prediction_path,
+    )
+    return {
+        "prediction_path": str(prediction_file),
+        "production_prediction_path": str(production_file),
+        "num_predictions": int(len(y_preds)),
+        "model_uri": metadata["model_uri"],
+        "classification_threshold": champion_classification_threshold(metadata),
+    }
+
+
 def evaluate_test_candidate(
     X_fit: pd.DataFrame,
     y_fit: pd.Series,
@@ -668,21 +872,22 @@ def evaluate_test_candidate(
     y_test_for_metrics = y_test
     predict_start_time = perf_counter()
     if test_config.streaming_batch_size is None:
-        y_scores, _ = offline_predict_scores(
+        y_scores, y_preds = offline_predict_scores(
             pipeline,
             X_test,
+            threshold=candidate.classification_threshold
         )
         test_mode = "offline_full_batch"
     else:
-        y_scores, _ = streaming_predict_scores(
+        y_scores, y_preds = streaming_predict_scores(
             pipeline,
             X_test,
             batch_size=test_config.streaming_batch_size,
             stream_update=stream_update_for_policy(candidate.feature_state_policy),
+            threshold=candidate.classification_threshold
         )
         _, y_test_for_metrics = sort_y_labels(X_test, y_test)
         test_mode = "streaming"
-    y_preds = predict_labels_at_threshold(y_scores, candidate.classification_threshold)
     predict_elapsed_seconds = perf_counter() - predict_start_time
 
     metrics = compute_classification_metric(

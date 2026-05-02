@@ -1,4 +1,6 @@
+import pandas as pd
 import numpy as np
+from typing import Any
 
 from ..utils import (
     TIME_COLUMN
@@ -46,7 +48,7 @@ class StreamingPipelineScorer:
             Xt = self._transform_for_inference(step, Xt)
 
 
-def streaming_predict_scores(fitted_pipeline, X_stream, batch_size=1, stream_update=True):
+def streaming_predict_scores(fitted_pipeline, X_stream, batch_size=1, stream_update=True, threshold=0.5):
     scorer = StreamingPipelineScorer(fitted_pipeline)
     X_stream_sorted = X_stream.sort_values(TIME_COLUMN)
     y_scores = []
@@ -59,13 +61,13 @@ def streaming_predict_scores(fitted_pipeline, X_stream, batch_size=1, stream_upd
             scorer.update(X_batch)
 
     y_scores = np.array(y_scores)
-    y_preds = np.where(y_scores >= 0.5, 1, 0)
+    y_preds = predict_labels_at_threshold(y_scores, threshold)
     return y_scores, y_preds
 
 
-def offline_predict_scores(fitted_pipeline, X):
+def offline_predict_scores(fitted_pipeline, X, threshold=0.5):
     y_scores = fitted_pipeline.predict_proba(X)[:, 1]
-    y_preds = np.where(y_scores >= 0.5, 1, 0)
+    y_preds = predict_labels_at_threshold(y_scores, threshold)
     return y_scores, y_preds
 
 
@@ -73,3 +75,7 @@ def sort_y_labels(X_stream, y_stream):
     X_stream_sorted = X_stream.sort_values(TIME_COLUMN)
     y_stream_sorted = y_stream.loc[X_stream_sorted.index]
     return X_stream_sorted, y_stream_sorted
+
+
+def predict_labels_at_threshold(y_scores: Any, threshold: float) -> Any:
+    return (pd.Series(y_scores) >= threshold).astype(int).to_numpy()

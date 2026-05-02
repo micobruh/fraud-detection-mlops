@@ -61,6 +61,16 @@ The test metrics above reflect the final held-out streaming test evaluation. The
 
 The production-style pipeline trains models offline on historical data, validates candidate models on a later streaming validation window, retrains the selected candidate on train plus validation data, and evaluates once on the final streaming test window. After test evaluation, the selected model is promoted to the MLflow model registry with the `champion` alias and documented in `artifacts/champion_model.json`.
 
+To promote the latest tested final candidate from the command line, run this from the repository root:
+
+```bash
+python -m src.models.registry promote
+```
+
+This registers a new version under `FraudDetectionXGBoostChampion`, moves the `champion` alias to that version, and updates `artifacts/champion_model.json` with the champion metadata, including the selected classification threshold. The old registered versions remain in MLflow for audit and rollback, but `models:/FraudDetectionXGBoostChampion@champion` resolves to the newly promoted model.
+
+The same registry update can also be done directly in the MLflow app. Open the MLflow UI, find the final candidate model from the latest `online-streaming-test` run, register it as a new version of `FraudDetectionXGBoostChampion`, and assign or move the `champion` alias to that version.
+
 # Local pipeline runs with Docker
 
 Build the pipeline image from the repository root:
@@ -69,7 +79,81 @@ Build the pipeline image from the repository root:
 docker build -t fraud-detection-mlops:local .
 ```
 
-The Dockerfile default command is `python main.py test`, so running the image without a stage override starts streaming test. Use the mounted directories below to provide the local interim dataset and persist MLflow runs and generated artifacts after the container exits.
+The Dockerfile default command starts the FastAPI inference service with Uvicorn on port 8000. Use explicit stage commands, such as `python main.py test`, when you want to run training, validation, or batch test jobs instead.
+
+To run the FastAPI inference service:
+
+```bash
+docker run --rm \
+  -p 8000:8000 \
+  -v "$PWD/mlruns:/app/mlruns" \
+  -v "$PWD/artifacts:/app/artifacts" \
+  fraud-detection-mlops:local
+```
+
+The API expects JSON at `POST /predict` with a top-level `records` list. Each record should contain the raw pipeline input columns for one transaction, including temporary columns that may be used by preprocessing and then dropped inside the saved pipeline. Do not include the target column `isFraud` in normal inference requests.
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "records": [
+      {
+        "TransactionID": 10001,
+        "TransactionDT": 86400,
+        "TransactionAmt": 125.50,
+        "ProductCD": "W",
+        "card1": 1234,
+        "card2": 321,
+        "card3": 150,
+        "card4": "visa",
+        "card5": 226,
+        "card6": "debit",
+        "addr1": 315,
+        "addr2": 87,
+        "P_emaildomain": "gmail.com",
+        "R_emaildomain": null
+      }
+    ]
+  }'
+```
+
+Example response:
+
+```json
+{
+  "model_uri": "models:/FraudDetectionXGBoostChampion@champion",
+  "classification_threshold": 0.2138222306966781,
+  "predictions": [
+    {
+      "transaction_id": 10001,
+      "fraud_score": 0.72,
+      "is_fraud": 1
+    }
+  ]
+}
+```
+
+To convert a parquet file into the JSON payload expected by `/predict`:
+
+```bash
+python scripts/parquet_to_predict_json.py \
+  data/interim/ieee-fraud-detection/test.parquet \
+  artifacts/predict_payload.json \
+  --limit 10
+```
+
+The converter drops `isFraud` by default if the parquet file contains labels. Add `--include-target` only for local debugging.
+
+Then send it to the API:
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  --data-binary @artifacts/predict_payload.json
+```
 
 To run training:
 
@@ -94,16 +178,6 @@ docker run --rm \
 ```
 
 To run streaming test evaluation:
-
-```bash
-docker run --rm \
-  -v "$PWD/data:/app/data" \
-  -v "$PWD/mlruns:/app/mlruns" \
-  -v "$PWD/artifacts:/app/artifacts" \
-  fraud-detection-mlops:local
-```
-
-This is equivalent to:
 
 ```bash
 docker run --rm \
