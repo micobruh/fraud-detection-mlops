@@ -19,7 +19,8 @@ from ..models import (
     streaming_predict_scores,
     offline_predict_scores,
     sort_y_labels,
-    compute_classification_metric
+    compute_classification_metric,
+    select_threshold_by_f1,
 )
 from ..utils import (
     FEATURE_SETS,
@@ -52,6 +53,11 @@ VALIDATION_RESULT_COLUMNS = [
     "precision",
     "average_precision",
     "accuracy",
+    "classification_threshold",
+    "threshold_selection_metric",
+    "threshold_validation_f1",
+    "threshold_validation_precision",
+    "threshold_validation_recall",
     "fit_elapsed_seconds",
     "predict_elapsed_seconds",
 ]
@@ -69,6 +75,7 @@ TEST_RESULT_COLUMNS = [
     "best_params",
     "test_mode",
     "streaming_batch_size",
+    "classification_threshold",
     "roc_auc",
     "f1",
     "recall",
@@ -169,6 +176,7 @@ class TestResult(BaseModel):
     selected_feature_state_policy: str
     test_mode: str
     streaming_batch_size: int | None
+    classification_threshold: float
     roc_auc: float
     f1: float
     recall: float
@@ -248,6 +256,14 @@ class ValidatedCandidateRow(BaseModel):
     model_uri: str
     roc_auc: float
     feature_state_policy: str
+    classification_threshold: float = 0.5
+
+    @field_validator("classification_threshold", mode="before")
+    @classmethod
+    def default_missing_threshold(cls, value: Any) -> float:
+        if value is None or pd.isna(value):
+            return 0.5
+        return float(value)
 
 
 def select_best_validated_candidate(
@@ -312,6 +328,12 @@ def save_selected_model(
         ),
         "model_uri": selected["model_uri"],
     }
+    if "classification_threshold" in selected and not pd.isna(selected["classification_threshold"]):
+        selected_model["classification_threshold"] = float(selected["classification_threshold"])
+        selected_model["threshold_selection_metric"] = selected.get("threshold_selection_metric")
+        selected_model["threshold_validation_f1"] = float(selected["threshold_validation_f1"])
+        selected_model["threshold_validation_precision"] = float(selected["threshold_validation_precision"])
+        selected_model["threshold_validation_recall"] = float(selected["threshold_validation_recall"])
 
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -344,8 +366,110 @@ def stream_update_for_policy(feature_state_policy: str) -> bool:
     return feature_state_policy == "updated_after_prediction"
 
 
+def predict_labels_at_threshold(y_scores: Any, threshold: float) -> Any:
+    return (pd.Series(y_scores) >= threshold).astype(int).to_numpy()
+
+
 def safe_mlflow_key_part(value: str) -> str:
     return value.replace(" ", "_").replace("-", "_")
+
+
+def select_threshold_for_validated_candidate(
+    data_dir: str,
+    comparison_path: str | Path = "artifacts/model_validation_incremental.csv",
+    selected_model_path: str | Path = "artifacts/selected_model.json",
+    v_columns_cache_path: str | None = "artifacts/selected_v_columns.json",
+    streaming_batch_size: int | None = None,
+) -> dict[str, Any]:
+    """
+    Tune the operating threshold for the already selected validation candidate.
+
+    This reruns only the best validated candidate from `comparison_path`; it does
+    not repeat the full top-k validation search or final test evaluation.
+    """
+    comparison_file = resolve_project_path(comparison_path)
+    results_df = pd.read_csv(comparison_file)
+    if results_df.empty:
+        raise ValueError(f"No validated candidates found in {comparison_file}.")
+
+    results_df["best_params"] = results_df["best_params"].apply(parse_best_params)
+    selected_idx = results_df["roc_auc"].astype(float).idxmax()
+    selected = results_df.loc[selected_idx]
+
+    batch_size = (
+        None
+        if pd.isna(selected.get("streaming_batch_size"))
+        else int(selected["streaming_batch_size"])
+    )
+    if streaming_batch_size is not None:
+        batch_size = streaming_batch_size
+
+    logger.info(
+        "Selecting threshold for validation_rank=%s model=%s feature_set=%s.",
+        selected["validation_rank"],
+        selected["model_name"],
+        selected["feature_set_name"],
+    )
+
+    df = load_interim_data(data_dir)
+    _, selected_columns, X_train, X_stream_val, _, y_train, y_stream_val, _ = temporal_train_val_test_split(
+        df,
+        selected["feature_set_name"],
+        v_columns_cache_path=v_columns_cache_path,
+    )
+    pipeline = build_pipeline_from_config(
+        selected_columns,
+        selected["feature_set_name"],
+        selected["model_name"],
+        selected["best_params"],
+    )
+    pipeline.fit(X_train, y_train)
+
+    if batch_size is None:
+        y_scores, _ = offline_predict_scores(pipeline, X_stream_val)
+        y_eval = y_stream_val
+    else:
+        y_scores, _ = streaming_predict_scores(
+            pipeline,
+            X_stream_val,
+            batch_size=batch_size,
+            stream_update=stream_update_for_policy(selected["feature_state_policy"]),
+        )
+        _, y_eval = sort_y_labels(X_stream_val, y_stream_val)
+
+    threshold_result = select_threshold_by_f1(y_eval, y_scores)
+    threshold = threshold_result["threshold"]
+    y_preds = predict_labels_at_threshold(y_scores, threshold)
+    threshold_metrics = compute_classification_metric(
+        selected["model_name"],
+        "Validation selected threshold",
+        y_eval,
+        y_scores,
+        y_preds,
+    )
+
+    results_df.loc[selected_idx, "classification_threshold"] = threshold
+    results_df.loc[selected_idx, "threshold_selection_metric"] = threshold_result["selection_metric"]
+    results_df.loc[selected_idx, "threshold_validation_f1"] = threshold_result["f1"]
+    results_df.loc[selected_idx, "threshold_validation_precision"] = threshold_result["precision"]
+    results_df.loc[selected_idx, "threshold_validation_recall"] = threshold_result["recall"]
+    save_validation_results(results_df, comparison_path)
+    save_selected_model(results_df, selected_model_path)
+
+    output = {
+        **threshold_result,
+        "validation_rank": int(selected["validation_rank"]),
+        "model_name": selected["model_name"],
+        "feature_set_name": selected["feature_set_name"],
+        "streaming_batch_size": batch_size,
+        "metrics_at_threshold": threshold_metrics,
+    }
+    logger.info(
+        "Selected classification threshold %.6f by %s.",
+        threshold,
+        threshold_result["selection_metric"],
+    )
+    return output
 
 
 def validation(
@@ -544,13 +668,13 @@ def evaluate_test_candidate(
     y_test_for_metrics = y_test
     predict_start_time = perf_counter()
     if test_config.streaming_batch_size is None:
-        y_scores, y_preds = offline_predict_scores(
+        y_scores, _ = offline_predict_scores(
             pipeline,
             X_test,
         )
         test_mode = "offline_full_batch"
     else:
-        y_scores, y_preds = streaming_predict_scores(
+        y_scores, _ = streaming_predict_scores(
             pipeline,
             X_test,
             batch_size=test_config.streaming_batch_size,
@@ -558,6 +682,7 @@ def evaluate_test_candidate(
         )
         _, y_test_for_metrics = sort_y_labels(X_test, y_test)
         test_mode = "streaming"
+    y_preds = predict_labels_at_threshold(y_scores, candidate.classification_threshold)
     predict_elapsed_seconds = perf_counter() - predict_start_time
 
     metrics = compute_classification_metric(
@@ -580,6 +705,7 @@ def evaluate_test_candidate(
         best_params=candidate.best_params,
         test_mode=test_mode,
         streaming_batch_size=test_config.streaming_batch_size,
+        classification_threshold=candidate.classification_threshold,
         fit_elapsed_seconds=fit_elapsed_seconds,
         predict_elapsed_seconds=predict_elapsed_seconds,
         **metrics,
@@ -691,6 +817,7 @@ def test(
             "final_training_data_scope": final_result.training_data_scope,
             "final_test_mode": final_result.test_mode,
             "final_streaming_batch_size": str(final_result.streaming_batch_size),
+            "final_classification_threshold": str(final_result.classification_threshold),
         })
         mlflow.sklearn.log_model(
             final_pipeline,

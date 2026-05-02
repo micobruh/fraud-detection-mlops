@@ -18,29 +18,105 @@ While some Kaggle solutions use stratified cross-validation, I adopted a time-aw
 
 7. Scheduled Retraining via Prefect
 
-# Local training with Docker
+# Champion Model
 
-Build the training image from the repository root:
+The final champion model is an XGBoost classifier using the `base` feature set. It was selected because it achieved the highest validation ROC-AUC among the evaluated candidates, then confirmed strong performance on the held-out streaming test window.
 
-```bash
-docker build -t fraud-detection-training:local .
+Final model configuration:
+
+```text
+Registered model: FraudDetectionXGBoostChampion
+Model URI: models:/FraudDetectionXGBoostChampion@champion
+Model: xgboost
+Feature set: base
+Training scope: train_plus_validation
+Evaluation mode: streaming
+Streaming batch size: 1
+Classification threshold: 0.2138
+Threshold selection: max validation F1
 ```
 
-To view MLflow while training is running, use two terminals.
+The operating threshold is selected after model selection. The model candidate is chosen by validation ROC-AUC, then the selected candidate's classification threshold is tuned on the streaming validation window to maximize F1. This moved the operating threshold from the default `0.5` to `0.2138`, improving validation recall while keeping precision acceptable for a fraud alerting workflow.
 
-Terminal 1, start the training flow:
+Validation metrics at selected threshold:
+
+```text
+F1: 0.5748
+Precision: 0.6499
+Recall: 0.5152
+```
+
+Final held-out test metrics:
+
+```text
+ROC-AUC: 0.9287
+Average precision: 0.5960
+F1: 0.5224
+Precision: 0.8311
+Recall: 0.3809
+Accuracy: 0.9757
+```
+
+The test metrics above reflect the final held-out streaming test evaluation. The test set is used only for final evaluation, not for model or threshold selection.
+
+The production-style pipeline trains models offline on historical data, validates candidate models on a later streaming validation window, retrains the selected candidate on train plus validation data, and evaluates once on the final streaming test window. After test evaluation, the selected model is promoted to the MLflow model registry with the `champion` alias and documented in `artifacts/champion_model.json`.
+
+# Local pipeline runs with Docker
+
+Build the pipeline image from the repository root:
+
+```bash
+docker build -t fraud-detection-mlops:local .
+```
+
+The Dockerfile default command is `python main.py test`, so running the image without a stage override starts streaming test. Use the mounted directories below to provide the local interim dataset and persist MLflow runs and generated artifacts after the container exits.
+
+To run training:
 
 ```bash
 docker run --rm \
   -v "$PWD/data:/app/data" \
   -v "$PWD/mlruns:/app/mlruns" \
   -v "$PWD/artifacts:/app/artifacts" \
-  fraud-detection-training:local
+  fraud-detection-mlops:local \
+  python main.py training
 ```
 
-The Dockerfile default command is `python main.py`, so the command above starts the model training flow. The mounted directories provide the real local dataset and persist MLflow runs and generated artifacts after the container exits.
+To run streaming validation:
 
-Terminal 2, start the MLflow UI:
+```bash
+docker run --rm \
+  -v "$PWD/data:/app/data" \
+  -v "$PWD/mlruns:/app/mlruns" \
+  -v "$PWD/artifacts:/app/artifacts" \
+  fraud-detection-mlops:local \
+  python main.py validation
+```
+
+To run streaming test evaluation:
+
+```bash
+docker run --rm \
+  -v "$PWD/data:/app/data" \
+  -v "$PWD/mlruns:/app/mlruns" \
+  -v "$PWD/artifacts:/app/artifacts" \
+  fraud-detection-mlops:local
+```
+
+This is equivalent to:
+
+```bash
+docker run --rm \
+  -v "$PWD/data:/app/data" \
+  -v "$PWD/mlruns:/app/mlruns" \
+  -v "$PWD/artifacts:/app/artifacts" \
+  fraud-detection-mlops:local \
+  python main.py test
+```
+
+Validation expects `artifacts/model_comparison_incremental.csv` and `artifacts/selected_v_columns.json` to exist. Test evaluation expects `artifacts/model_validation_incremental.csv`, `artifacts/selected_model.json`, and `artifacts/selected_v_columns.json` to exist.
+
+To view MLflow while a pipeline is running, use another terminal:
 
 ```bash
 mlflow ui --backend-store-uri mlruns
@@ -74,17 +150,17 @@ If MLflow is not installed in the local Python environment, run the UI from Dock
 docker run --rm \
   -p 5000:5000 \
   -v "$PWD/mlruns:/app/mlruns" \
-  fraud-detection-training:local \
+  fraud-detection-mlops:local \
   mlflow ui --backend-store-uri /app/mlruns --host 0.0.0.0 --port 5000
 ```
 
 To run the test suite inside the same image:
 
 ```bash
-docker run --rm fraud-detection-training:local pytest
+docker run --rm fraud-detection-mlops:local pytest
 ```
 
-Note: mounting `artifacts:/app/artifacts` allows training to update files in the local `artifacts/` directory.
+Note: mounting `artifacts:/app/artifacts` allows the pipeline stages to read and update files in the local `artifacts/` directory.
 
 # Installing raw data from kaggle IEEE-CIS competition
 

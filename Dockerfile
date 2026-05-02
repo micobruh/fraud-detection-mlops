@@ -29,4 +29,4 @@ COPY --chown=app:app tests ./tests
 
 USER app
 
-CMD ["python", "main.py", "validation"]
+CMD ["python", "main.py", "test"]

@@ -8,6 +8,7 @@ from src.pipelines import (
     baseline_test,    
     training,
     validation,
+    select_threshold_for_validated_candidate,
     test
 )
 from src.utils import (
@@ -26,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "stage",
         nargs="?",
-        choices=["all", "training", "validation", "test"],
+        choices=["all", "training", "validation", "threshold", "test"],
         default="all",
         help="Pipeline stage to run. Defaults to all.",
     )
@@ -80,6 +81,20 @@ def run_test(data_dir: str | Path | None = None) -> None:
     logger.info("Test complete. MLflow runs are available in experiment '%s'.", MLFLOW_TEST_EXPERIMENT_NAME)
 
 
+def run_threshold_selection(data_dir: str | Path | None = None) -> None:
+    setup_logging()
+
+    interim_data_dir = data_dir or get_interim_data_dir()
+    threshold_result = select_threshold_for_validated_candidate(interim_data_dir)
+    logger.info(
+        "Threshold selection complete. threshold=%.6f f1=%.3f precision=%.3f recall=%.3f",
+        threshold_result["threshold"],
+        threshold_result["f1"],
+        threshold_result["precision"],
+        threshold_result["recall"],
+    )
+
+
 def main() -> None:
     setup_logging()
 
@@ -97,6 +112,16 @@ def main() -> None:
         baseline_validation(interim_data_dir)
         validation(interim_data_dir)
         logger.info("Validation complete. MLflow runs are available in experiment '%s'.", MLFLOW_VALIDATION_EXPERIMENT_NAME)
+
+    if args.stage in {"all", "threshold"}:
+        threshold_result = select_threshold_for_validated_candidate(interim_data_dir)
+        logger.info(
+            "Threshold selection complete. threshold=%.6f f1=%.3f precision=%.3f recall=%.3f",
+            threshold_result["threshold"],
+            threshold_result["f1"],
+            threshold_result["precision"],
+            threshold_result["recall"],
+        )
 
     if args.stage in {"all", "test"}:
         log_mlflow_hint(MLFLOW_TEST_EXPERIMENT_NAME)

@@ -8,6 +8,7 @@ from .training_flow import (
     training
 )
 from .batch_scoring_flow import (
+    select_threshold_for_validated_candidate,
     test,
     validation,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "baseline_test",
     "build_feature_pipeline",
     "run_model_search",
+    "select_threshold_for_validated_candidate",
     "test",
     "training",
     "validation"    

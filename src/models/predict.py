@@ -9,16 +9,25 @@ class StreamingPipelineScorer:
     def __init__(self, fitted_pipeline):
         self.pipeline = fitted_pipeline
 
+    @staticmethod
+    def _is_inference_passthrough(step):
+        return step is None or step == "passthrough" or hasattr(step, "fit_resample")
+
+    def _transform_for_inference(self, step, Xt):
+        if self._is_inference_passthrough(step):
+            return Xt
+
+        stream_transform = getattr(step, "transform_stream", None)
+        if callable(stream_transform):
+            return stream_transform(Xt)
+
+        return step.transform(Xt)
+
     def predict_proba(self, X_batch):
         Xt = X_batch
 
         for _, step in self.pipeline.steps[: -1]:
-            stream_transform = getattr(step, "transform_stream", None)
-
-            if callable(stream_transform):
-                Xt = stream_transform(Xt)
-            else:
-                Xt = step.transform(Xt)
+            Xt = self._transform_for_inference(step, Xt)
 
         model = self.pipeline.steps[-1][1]
         return model.predict_proba(Xt)
@@ -27,15 +36,14 @@ class StreamingPipelineScorer:
         Xt = X_batch
 
         for _, step in self.pipeline.steps[:-1]:
+            if self._is_inference_passthrough(step):
+                continue
+
             partial_fit_stream = getattr(step, "partial_fit_stream", None)
             if callable(partial_fit_stream):
                 partial_fit_stream(Xt)
 
-            stream_transform = getattr(step, "transform_stream", None)
-            if callable(stream_transform):
-                Xt = stream_transform(Xt)
-            else:
-                Xt = step.transform(Xt)
+            Xt = self._transform_for_inference(step, Xt)
 
 
 def streaming_predict_scores(fitted_pipeline, X_stream, batch_size=1, stream_update=True):

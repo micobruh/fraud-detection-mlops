@@ -6,7 +6,8 @@ from sklearn.metrics import (
     accuracy_score, 
     average_precision_score, 
     recall_score, 
-    precision_score
+    precision_score,
+    precision_recall_curve
 )
 import logging
 
@@ -50,4 +51,20 @@ def compute_classification_metric(
         "precision": final_precision,
         "average_precision": final_ap_score,
         "accuracy": final_accuracy,
+    }
+
+
+def select_threshold_by_f1(y_true: np.ndarray, y_score: np.ndarray) -> dict:
+    precision, recall, thresholds = precision_recall_curve(y_true, y_score)
+
+    f1 = 2 * precision * recall / (precision + recall + 1e-12)
+
+    best_idx = f1[:-1].argmax()
+
+    return {
+        "threshold": float(thresholds[best_idx]),
+        "f1": float(f1[best_idx]),
+        "precision": float(precision[best_idx]),
+        "recall": float(recall[best_idx]),
+        "selection_metric": "max_validation_f1",
     }

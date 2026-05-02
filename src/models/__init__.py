@@ -1,5 +1,6 @@
 from .evaluation import (
     compute_classification_metric,
+    select_threshold_by_f1,
 )
 from .predict import (
     offline_predict_scores,
@@ -17,6 +18,7 @@ __all__ = [
     "offline_predict_scores",
     "sort_y_labels",
     "compute_classification_metric",
+    "select_threshold_by_f1",
     "get_candidate_configs",
     "build_full_pipeline",
     "build_pipeline_from_config",

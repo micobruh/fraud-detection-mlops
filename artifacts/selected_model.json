@@ -1,0 +1,24 @@
+{
+  "best_params": {
+    "model__colsample_bytree": 0.8,
+    "model__learning_rate": 0.03,
+    "model__max_depth": 8,
+    "model__n_estimators": 500,
+    "model__subsample": 0.8,
+    "sampler": "passthrough"
+  },
+  "classification_threshold": 0.21382223069667816,
+  "feature_set_name": "base",
+  "feature_state_policy": "not_applicable",
+  "model_name": "xgboost",
+  "model_uri": "runs:/d7162f9ee0174d37ae2c482ee92b1b16/candidate_2",
+  "streaming_batch_size": 1,
+  "threshold_selection_metric": "max_validation_f1",
+  "threshold_validation_f1": 0.5747534516760353,
+  "threshold_validation_precision": 0.6498661909009813,
+  "threshold_validation_recall": 0.5152050919377652,
+  "validation_average_precision": 0.6115927414678461,
+  "validation_mode": "streaming",
+  "validation_rank": 1,
+  "validation_roc_auc": 0.9296802695872576
+}
